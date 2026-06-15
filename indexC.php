@@ -182,7 +182,7 @@ $main_keyboard = json_encode([
 // لوحة "التحكم الأساسي" - تم التحديث
 $basic_control_keyboard = json_encode([
     'inline_keyboard' => [
-        [['text' => "🟢 تشغيل الفلاش", 'callback_data' => "flash_web"], ['text' => "🔴 ايقاف الفلاش", 'callback_data' => "off_web"]],
+        [['text' => "🟢 تشغيل ♥الفلاش", 'callback_data' => "flash_web"], ['text' => "🔴 ايقاف الفلاش", 'callback_data' => "off_web"]],
         [['text' => "📳 تشغيل الاهتزاز", 'callback_data' => "hz_web"], ['text' => "🔊 مستوى الصوت", 'callback_data' => "request_sond"]],
         [['text' => "🖼️ تغيير الخلفية", 'callback_data' => "bg_web"]],
         [['text' => "💡 ضبط سطوع الشاشة", 'callback_data' => "request_brightness"]], 
